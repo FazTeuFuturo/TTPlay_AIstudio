@@ -1,0 +1,5 @@
+{
+  "name": "TTPlay",
+  "description": "A comprehensive platform for managing table tennis tournaments, tracking player rankings, and engaging with the community. This application provides a visual bracket for single-elimination tournaments, allowing for real-time score updates and automatic advancement of winners.",
+  "requestFramePermissions": []
+}
