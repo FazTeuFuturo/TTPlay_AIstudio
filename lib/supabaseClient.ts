@@ -1,11 +1,24 @@
 import { createClient } from '@supabase/supabase-js';
-import { User } from '../types';
+// Certifique-se de que o caminho para 'types' está correto
+import { User } from '../types'; 
 
-const supabaseUrl = 'https://luljbzljfazxqovqaxsa.supabase.co';
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1bGpiemxqZmF6eHFvdnFheHNhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjEyNTc4MTksImV4cCI6MjA3NjgzMzgxOX0.4C0v_4jfifO_prWAVmWCloJjr9fQCWuY36SA-zgJqhg';
+// --- CORREÇÃO IMPORTANTE DE SEGURANÇA ---
+// 1. LEIA as chaves das Variáveis de Ambiente.
+//    NÃO coloque as chaves diretamente aqui.
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
+// 2. Verifique se as variáveis foram carregadas
+//    Isso ajuda a encontrar erros rapidamente.
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error("Erro: Variáveis de ambiente VITE_SUPABASE_URL ou VITE_SUPABASE_ANON_KEY não foram encontradas.");
+}
+// --- FIM DA CORREÇÃO ---
+
+// 3. Crie o cliente com as variáveis seguras
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
+// 4. Sua função (estava correta, sem alterações)
 export const getSupabaseUser = async (): Promise<(User & { clubId?: string }) | null> => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return null;
