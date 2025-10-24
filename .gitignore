@@ -1,0 +1,13 @@
+# Arquivos de ambiente local (SEGREDO!)
+.env.local
+
+# Dependências do Node (pasta gigante)
+node_modules
+
+# Pasta de build (gerada automaticamente)
+dist
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
