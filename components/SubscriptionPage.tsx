@@ -11,35 +11,32 @@ interface SubscriptionPageProps {
 const SubscriptionPage: React.FC<SubscriptionPageProps> = ({ onSubscribed, onBack }) => {
     const [isLoading, setIsLoading] = useState(false);
 
-    const handleSubscription = () => {
+    const handleSubscription = async () => {
         setIsLoading(true);
-        const session = getCurrentUserSession();
+        const session = await getCurrentUserSession();
         if (!session) {
             alert("Sessão não encontrada. Por favor, faça login novamente.");
             setIsLoading(false);
             return;
         }
         
-        const club = getClubByAdminId(session.userId);
+        const club = await getClubByAdminId(session.userId);
         if (!club) {
             alert("Clube não encontrado.");
             setIsLoading(false);
             return;
         }
 
-        // Simulate API call
-        setTimeout(() => {
-            try {
-                upgradeClubSubscription(club.id);
-                alert("Parabéns! Seu clube agora é Pro. Todas as funcionalidades foram desbloqueadas.");
-                onSubscribed();
-            } catch (error) {
-                 const errorMessage = error instanceof Error ? error.message : String(error);
-                alert(`Erro ao processar assinatura: ${errorMessage}`);
-            } finally {
-                setIsLoading(false);
-            }
-        }, 1000);
+        try {
+            await upgradeClubSubscription(club.id);
+            alert("Parabéns! Seu clube agora é Pro. Todas as funcionalidades foram desbloqueadas.");
+            onSubscribed();
+        } catch (error) {
+             const errorMessage = error instanceof Error ? error.message : String(error);
+            alert(`Erro ao processar assinatura: ${errorMessage}`);
+        } finally {
+            setIsLoading(false);
+        }
     }
     
     return (

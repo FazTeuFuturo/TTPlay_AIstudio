@@ -1,17 +1,16 @@
 import React, { useState, useRef } from 'react';
 import { User, Gender } from '../types';
-import { updateUserDetails } from '../data-service';
-import { ArrowLeftIcon } from './Icons';
+import { ArrowLeftIcon, SpinnerIcon } from './Icons';
 import ImageCropper from './ImageCropper';
 
 interface PlayerProfileFormProps {
   user?: User; 
   mode: 'register' | 'edit';
-  onFormClose: () => void;
-  onRegister?: (data: Partial<User>) => boolean;
+  onFormSubmit: (data: Partial<User>) => Promise<boolean | void>;
+  onFormClose?: () => void;
 }
 
-const PlayerProfileForm: React.FC<PlayerProfileFormProps> = ({ user, mode, onFormClose, onRegister }) => {
+const PlayerProfileForm: React.FC<PlayerProfileFormProps> = ({ user, mode, onFormSubmit, onFormClose }) => {
   const [formData, setFormData] = useState<Partial<User>>({
     name: user?.name || '',
     email: user?.email || '',
@@ -23,7 +22,8 @@ const PlayerProfileForm: React.FC<PlayerProfileFormProps> = ({ user, mode, onFor
     gender: user?.gender || Gender.MALE,
     avatar: user?.avatar || '',
   });
-
+  
+  const [loading, setLoading] = useState(false);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [showCropper, setShowCropper] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -51,26 +51,30 @@ const PlayerProfileForm: React.FC<PlayerProfileFormProps> = ({ user, mode, onFor
     setImageSrc(null);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.birthDate || !formData.gender || !formData.name || !formData.email) {
         alert("Por favor, preencha todos os campos obrigatórios.");
         return;
     }
-    if (mode === 'register') {
-        if (!formData.password) {
-            alert("A senha é obrigatória para o cadastro.");
-            return;
-        }
-        if (onRegister) {
-            onRegister(formData);
-        }
-    } else if (user) {
-        updateUserDetails(user.id, formData);
-        alert('Perfil atualizado com sucesso!');
-        onFormClose();
+
+    if (mode === 'register' && !formData.password) {
+        alert("A senha é obrigatória para o cadastro.");
+        return;
     }
+
+    setLoading(true);
+    await onFormSubmit(formData);
+    setLoading(false);
   };
+
+  const handleClose = () => {
+      if (mode === 'register' && onFormClose) {
+          onFormClose();
+      } else {
+        onFormSubmit({}); // Pass empty data to signal close without save
+      }
+  }
 
   return (
     <div className="w-full max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-fade-in">
@@ -82,7 +86,7 @@ const PlayerProfileForm: React.FC<PlayerProfileFormProps> = ({ user, mode, onFor
         />
       )}
 
-        <button onClick={onFormClose} className="flex items-center gap-2 text-blue-400 hover:text-blue-300 transition-colors mb-6">
+        <button onClick={handleClose} className="flex items-center gap-2 text-blue-400 hover:text-blue-300 transition-colors mb-6">
             <ArrowLeftIcon className="w-5 h-5"/>
             {mode === 'edit' ? 'Voltar para o Painel' : 'Voltar'}
         </button>
@@ -91,8 +95,9 @@ const PlayerProfileForm: React.FC<PlayerProfileFormProps> = ({ user, mode, onFor
         {mode === 'edit' && user && (
             <div className="flex flex-col sm:flex-row items-center gap-6 mb-8">
                 <div className="relative group">
-                    <img src={formData.avatar} alt={formData.name} className="w-24 h-24 rounded-full border-4 border-slate-600 object-cover" />
+                    <img src={formData.avatar || `https://i.pravatar.cc/150?u=${user.id}`} alt={formData.name} className="w-24 h-24 rounded-full border-4 border-slate-600 object-cover" />
                     <button 
+                      type="button"
                       onClick={() => fileInputRef.current?.click()}
                       className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity text-xs font-bold"
                     >
@@ -117,28 +122,28 @@ const PlayerProfileForm: React.FC<PlayerProfileFormProps> = ({ user, mode, onFor
                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
                         <label htmlFor="email" className="block text-sm font-medium text-slate-300 mb-2">Email</label>
-                        <input type="email" name="email" id="email" value={formData.email} onChange={handleChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required />
+                        <input type="email" name="email" id="email" value={formData.email} onChange={handleChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required disabled={loading} />
                     </div>
                     <div>
                         <label htmlFor="password" className="block text-sm font-medium text-slate-300 mb-2">Senha</label>
-                        <input type="password" name="password" id="password" value={formData.password} onChange={handleChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required />
+                        <input type="password" name="password" id="password" value={formData.password} onChange={handleChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required disabled={loading} />
                     </div>
                 </div>
             )}
 
             <div>
                 <label htmlFor="name" className="block text-sm font-medium text-slate-300 mb-2">Nome Completo</label>
-                <input type="text" name="name" id="name" value={formData.name} onChange={handleChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required />
+                <input type="text" name="name" id="name" value={formData.name} onChange={handleChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required disabled={loading} />
             </div>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                     <label htmlFor="birthDate" className="block text-sm font-medium text-slate-300 mb-2">Data de Nascimento</label>
-                    <input type="date" name="birthDate" id="birthDate" value={formData.birthDate} onChange={handleChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required />
+                    <input type="date" name="birthDate" id="birthDate" value={formData.birthDate} onChange={handleChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required disabled={loading} />
                 </div>
                 <div>
                     <label htmlFor="gender" className="block text-sm font-medium text-slate-300 mb-2">Gênero</label>
-                    <select name="gender" id="gender" value={formData.gender} onChange={handleChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required>
+                    <select name="gender" id="gender" value={formData.gender} onChange={handleChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required disabled={loading}>
                         <option value={Gender.MALE}>Masculino</option>
                         <option value={Gender.FEMALE}>Feminino</option>
                     </select>
@@ -148,24 +153,25 @@ const PlayerProfileForm: React.FC<PlayerProfileFormProps> = ({ user, mode, onFor
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                  <div>
                     <label htmlFor="city" className="block text-sm font-medium text-slate-300 mb-2">Cidade</label>
-                    <input type="text" name="city" id="city" value={formData.city} onChange={handleChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" />
+                    <input type="text" name="city" id="city" value={formData.city} onChange={handleChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" disabled={loading} />
                 </div>
                  <div>
                     <label htmlFor="phone" className="block text-sm font-medium text-slate-300 mb-2">Telefone</label>
-                    <input type="tel" name="phone" id="phone" value={formData.phone} onChange={handleChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" />
+                    <input type="tel" name="phone" id="phone" value={formData.phone} onChange={handleChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" disabled={loading} />
                 </div>
             </div>
              <div>
                 <label htmlFor="bio" className="block text-sm font-medium text-slate-300 mb-2">Biografia / Sobre você (Opcional)</label>
-                <textarea name="bio" id="bio" value={formData.bio} onChange={handleChange} rows={4} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" />
+                <textarea name="bio" id="bio" value={formData.bio} onChange={handleChange} rows={4} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" disabled={loading} />
             </div>
 
           <div className="flex justify-end pt-4">
             <button 
               type="submit"
-              className="bg-green-600 hover:bg-green-500 text-white font-bold py-3 px-6 rounded transition-colors"
+              className="bg-green-600 hover:bg-green-500 text-white font-bold py-3 px-6 rounded transition-colors flex items-center justify-center min-w-[150px] disabled:bg-slate-600"
+              disabled={loading}
             >
-              {mode === 'edit' ? 'Salvar Alterações' : 'Cadastrar'}
+              {loading ? <SpinnerIcon className="w-6 h-6" /> : (mode === 'edit' ? 'Salvar Alterações' : 'Cadastrar')}
             </button>
           </div>
         </form>

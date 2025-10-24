@@ -3,7 +3,6 @@ import { TournamentCategory, Match, User, Group, TournamentStatus, TournamentFor
 import { getMatches, getUsers, getGroups, updateMatchResultAndAdvance } from '../data-service';
 import { Bracket } from './Bracket';
 import { GroupStageView } from './GroupStageView';
-// FIX: Replaced missing TrophyIcon with PingPongPaddleIcon.
 import { UsersIcon, PingPongPaddleIcon, ArrowLeftIcon } from './Icons';
 
 interface CategoryDetailsProps {
@@ -12,7 +11,6 @@ interface CategoryDetailsProps {
   onDataUpdate: () => void;
 }
 
-// FIX: Added formatLabels to provide user-friendly names for tournament formats.
 const formatLabels: Record<TournamentFormat, string> = {
     [TournamentFormat.ELIMINATORIA_SIMPLES]: 'Eliminatória Simples',
     [TournamentFormat.ELIMINATORIA_DUPLA]: 'Eliminatória Dupla',
@@ -29,12 +27,11 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
     category.status === TournamentStatus.GROUP_STAGE ? 'groups' : 'bracket'
   );
 
-  const fetchData = () => {
-    setMatches(getMatches(currentCategory.id));
-    setUsers(getUsers());
-    // FIX: Corrected enum member from GROUP_THEN_KNOCKOUT to GRUPOS_E_ELIMINATORIA.
+  const fetchData = async () => {
+    setMatches(await getMatches(currentCategory.id));
+    setUsers(await getUsers());
     if (currentCategory.format === TournamentFormat.GRUPOS_E_ELIMINATORIA) {
-      setGroups(getGroups(currentCategory.id));
+      setGroups(await getGroups(currentCategory.id));
     }
   };
 
@@ -48,8 +45,8 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
     }
   }, [currentCategory]);
 
-  const handleScoreUpdate = (matchId: string, setScores: { p1: number, p2: number }[]) => {
-    const updatedCategory = updateMatchResultAndAdvance(currentCategory.id, matchId, setScores);
+  const handleScoreUpdate = async (matchId: string, setScores: { p1: number, p2: number }[]) => {
+    const updatedCategory = await updateMatchResultAndAdvance(currentCategory.id, matchId, setScores);
     if (updatedCategory) {
         setCurrentCategory(updatedCategory);
         onDataUpdate(); // Notify parent to refresh all data if needed
@@ -69,7 +66,6 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
        )
     }
 
-    // FIX: Corrected enum member from GROUP_THEN_KNOCKOUT to GRUPOS_E_ELIMINATORIA.
     const showTabs = currentCategory.format === TournamentFormat.GRUPOS_E_ELIMINATORIA && groups.length > 0;
     
     return (
@@ -135,7 +131,6 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
         
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 text-slate-300 mt-4">
             <div className="flex items-center gap-3"><UsersIcon className="w-6 h-6 text-blue-500"/><span>{currentCategory.registrations.length} / {currentCategory.maxParticipants} Inscritos</span></div>
-            {/* FIX: Used PingPongPaddleIcon and formatLabels to display format. */}
             <div className="flex items-center gap-3"><PingPongPaddleIcon className="w-6 h-6 text-blue-500"/><span>{formatLabels[currentCategory.format]}</span></div>
         </div>
       </div>

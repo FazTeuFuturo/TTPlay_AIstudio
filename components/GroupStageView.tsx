@@ -7,7 +7,6 @@ interface GroupStageViewProps {
   groups: Group[];
   matches: Match[];
   players: User[];
-  // FIX: Updated onScoreUpdate to accept set scores to match the MatchCard component's prop type.
   onScoreUpdate: (matchId: string, setScores: { p1: number, p2: number }[]) => void;
   tournamentStatus: TournamentStatus;
 }

@@ -1,7 +1,5 @@
 import React, { useState, useCallback } from 'react';
-// FIX: Use named import 'default as' to correctly get the component from the CDN module.
-// This resolves the React error #525.
-import { default as Cropper } from 'react-easy-crop';
+import Cropper from 'react-easy-crop';
 import { SpinnerIcon } from './Icons';
 
 interface ImageCropperProps {

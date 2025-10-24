@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { User, PlayerStats, ClubStats, RecentMatch, Role } from '../types';
+import { User, PlayerStats, ClubStats, RecentMatch, Role, RatingHistory } from '../types';
 import { getPlayerStats, getClubStats, getRecentPlayerMatches, getRatingHistory } from '../data-service';
 import RatingChart from './RatingChart';
-import { PingPongPaddleIcon } from './Icons';
+import { PingPongPaddleIcon, SpinnerIcon } from './Icons';
 
 const StatCard: React.FC<{ title: string; value: string | number; }> = ({ title, value }) => (
     <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
@@ -14,15 +14,30 @@ const StatCard: React.FC<{ title: string; value: string | number; }> = ({ title,
 const PlayerDashboardContent: React.FC<{ user: User }> = ({ user }) => {
     const [stats, setStats] = useState<PlayerStats | null>(null);
     const [recentMatches, setRecentMatches] = useState<RecentMatch[]>([]);
-    const [ratingHistory, setRatingHistory] = useState<any[]>([]);
+    const [ratingHistory, setRatingHistory] = useState<RatingHistory[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
-        setStats(getPlayerStats(user.id));
-        setRecentMatches(getRecentPlayerMatches(user.id));
-        setRatingHistory(getRatingHistory(user.id));
+        const fetchStats = async () => {
+            setIsLoading(true);
+            const playerStats = await getPlayerStats(user.id);
+            setStats(playerStats);
+            setRecentMatches(getRecentPlayerMatches(user.id));
+            setRatingHistory(await getRatingHistory(user.id));
+            setIsLoading(false);
+        };
+        fetchStats();
     }, [user.id]);
 
-    if (!stats) return <div>Carregando estatísticas...</div>;
+    if (isLoading) {
+        return (
+            <div className="flex justify-center items-center h-64">
+                <SpinnerIcon className="w-8 h-8 text-blue-500" />
+            </div>
+        );
+    }
+    
+    if (!stats) return <div className="text-center py-8 text-slate-400">Não foi possível carregar as estatísticas.</div>;
     
     return (
         <div className="space-y-8">
@@ -74,9 +89,12 @@ const ClubDashboardContent: React.FC<{ user: User }> = ({ user }) => {
     const [stats, setStats] = useState<ClubStats | null>(null);
 
      useEffect(() => {
-        if (user.clubId) {
-            setStats(getClubStats(user.clubId));
-        }
+        const fetchClubStats = async () => {
+            if (user.clubId) {
+                setStats(await getClubStats(user.clubId));
+            }
+        };
+        fetchClubStats();
     }, [user.clubId]);
 
     if (!stats) return <div>Carregando estatísticas...</div>;

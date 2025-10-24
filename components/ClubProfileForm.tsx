@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Club, User, Gender, SubscriptionPlan } from '../types';
 import { updateClubDetails, transferClubAdminship } from '../data-service';
-import { ArrowLeftIcon } from './Icons';
+import { ArrowLeftIcon, SpinnerIcon } from './Icons';
 import ImageCropper from './ImageCropper';
 
 interface ClubProfileFormProps {
@@ -9,7 +9,7 @@ interface ClubProfileFormProps {
   adminUser?: User;
   mode: 'register' | 'edit';
   onFormClose: () => void;
-  onRegister?: (clubData: Partial<Club>, adminData: Partial<User>) => boolean;
+  onRegister?: (clubData: Partial<Club>, adminData: Partial<User>) => Promise<boolean>;
   onAdminTransferSuccess?: () => void;
 }
 
@@ -35,7 +35,8 @@ const ClubProfileForm: React.FC<ClubProfileFormProps> = ({ club, adminUser, mode
     birthDate: '',
     gender: Gender.MALE,
   });
-
+  
+  const [loading, setLoading] = useState(false);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [showCropper, setShowCropper] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -89,26 +90,32 @@ const ClubProfileForm: React.FC<ClubProfileFormProps> = ({ club, adminUser, mode
     setClubData(prev => ({...prev, discountRules: newRules}));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setLoading(true);
     if (mode === 'register') {
       if(!clubData.name || !adminData.name || !adminData.email || !adminData.password) {
         alert("Por favor, preencha todos os campos obrigatórios para o clube e o administrador.");
+        setLoading(false);
         return;
       }
       if (onRegister) {
-        onRegister(clubData, adminData);
+        await onRegister(clubData, adminData);
       }
     } else if (club) {
-      updateClubDetails(club.id, clubData);
-      alert('Perfil do clube atualizado com sucesso!');
-      onFormClose();
+      const updated = await updateClubDetails(club.id, clubData);
+      if (updated) {
+        alert('Perfil do clube atualizado com sucesso!');
+        onFormClose();
+      } else {
+        alert('Ocorreu um erro ao atualizar o perfil do clube.');
+      }
     }
+    setLoading(false);
   };
 
   const handleTransferAdminship = () => {
     if (!club || !adminUser || !newAdminEmail) return;
-    // REMOVED window.confirm check
     try {
         transferClubAdminship(club.id, newAdminEmail, adminUser.id);
         if (onAdminTransferSuccess) {
@@ -157,36 +164,36 @@ const ClubProfileForm: React.FC<ClubProfileFormProps> = ({ club, adminUser, mode
                     </div>
                     <div className="w-full">
                         <label htmlFor="clubName" className="block text-sm font-medium text-slate-300 mb-2">Nome do Clube</label>
-                        <input type="text" name="name" id="clubName" value={clubData.name} onChange={handleClubChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required />
+                        <input type="text" name="name" id="clubName" value={clubData.name} onChange={handleClubChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required disabled={loading} />
                     </div>
                 </div>
                  <div className="mt-6">
                     <label htmlFor="description" className="block text-sm font-medium text-slate-300 mb-2">Descrição</label>
-                    <textarea name="description" id="description" value={clubData.description} onChange={handleClubChange} rows={3} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" />
+                    <textarea name="description" id="description" value={clubData.description} onChange={handleClubChange} rows={3} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" disabled={loading} />
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
                     <div>
                         <label htmlFor="address" className="block text-sm font-medium text-slate-300 mb-2">Endereço</label>
-                        <input type="text" name="address" id="address" value={clubData.address} onChange={handleClubChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" />
+                        <input type="text" name="address" id="address" value={clubData.address} onChange={handleClubChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" disabled={loading} />
                     </div>
                      <div>
                         <label htmlFor="city" className="block text-sm font-medium text-slate-300 mb-2">Cidade</label>
-                        <input type="text" name="city" id="city" value={clubData.city} onChange={handleClubChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" />
+                        <input type="text" name="city" id="city" value={clubData.city} onChange={handleClubChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" disabled={loading} />
                     </div>
                 </div>
                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
                     <div>
                         <label htmlFor="clubEmail" className="block text-sm font-medium text-slate-300 mb-2">E-mail de Contato do Clube</label>
-                        <input type="email" name="email" id="clubEmail" value={clubData.email} onChange={handleClubChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" />
+                        <input type="email" name="email" id="clubEmail" value={clubData.email} onChange={handleClubChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" disabled={loading} />
                     </div>
                      <div>
                         <label htmlFor="phone" className="block text-sm font-medium text-slate-300 mb-2">Telefone</label>
-                        <input type="tel" name="phone" id="phone" value={clubData.phone} onChange={handleClubChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" />
+                        <input type="tel" name="phone" id="phone" value={clubData.phone} onChange={handleClubChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" disabled={loading} />
                     </div>
                 </div>
                  <div className="mt-6">
                     <label htmlFor="website" className="block text-sm font-medium text-slate-300 mb-2">Website</label>
-                    <input type="url" name="website" id="website" value={clubData.website} onChange={handleClubChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" />
+                    <input type="url" name="website" id="website" value={clubData.website} onChange={handleClubChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" disabled={loading} />
                 </div>
             </fieldset>
 
@@ -246,25 +253,25 @@ const ClubProfileForm: React.FC<ClubProfileFormProps> = ({ club, adminUser, mode
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div>
                                 <label htmlFor="adminEmail" className="block text-sm font-medium text-slate-300 mb-2">Email do Admin</label>
-                                <input type="email" name="email" id="adminEmail" value={adminData.email} onChange={handleAdminChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required />
+                                <input type="email" name="email" id="adminEmail" value={adminData.email} onChange={handleAdminChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required disabled={loading} />
                             </div>
                             <div>
                                 <label htmlFor="password" className="block text-sm font-medium text-slate-300 mb-2">Senha do Admin</label>
-                                <input type="password" name="password" id="password" value={adminData.password} onChange={handleAdminChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required />
+                                <input type="password" name="password" id="password" value={adminData.password} onChange={handleAdminChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required disabled={loading} />
                             </div>
                         </div>
                         <div>
                             <label htmlFor="adminName" className="block text-sm font-medium text-slate-300 mb-2">Nome Completo do Admin</label>
-                            <input type="text" name="name" id="adminName" value={adminData.name} onChange={handleAdminChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required />
+                            <input type="text" name="name" id="adminName" value={adminData.name} onChange={handleAdminChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required disabled={loading} />
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div>
                                 <label htmlFor="birthDate" className="block text-sm font-medium text-slate-300 mb-2">Data de Nascimento</label>
-                                <input type="date" name="birthDate" id="birthDate" value={adminData.birthDate} onChange={handleAdminChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required />
+                                <input type="date" name="birthDate" id="birthDate" value={adminData.birthDate} onChange={handleAdminChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required disabled={loading} />
                             </div>
                             <div>
                                 <label htmlFor="gender" className="block text-sm font-medium text-slate-300 mb-2">Gênero</label>
-                                <select name="gender" id="gender" value={adminData.gender} onChange={handleAdminChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required>
+                                <select name="gender" id="gender" value={adminData.gender} onChange={handleAdminChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required disabled={loading}>
                                     <option value={Gender.MALE}>Masculino</option>
                                     <option value={Gender.FEMALE}>Feminino</option>
                                 </select>
@@ -277,9 +284,10 @@ const ClubProfileForm: React.FC<ClubProfileFormProps> = ({ club, adminUser, mode
           <div className="flex justify-end pt-6">
             <button 
               type="submit"
-              className="bg-green-600 hover:bg-green-500 text-white font-bold py-3 px-6 rounded transition-colors"
+              className="bg-green-600 hover:bg-green-500 text-white font-bold py-3 px-6 rounded transition-colors flex items-center justify-center min-w-[180px] disabled:bg-slate-600"
+              disabled={loading}
             >
-              {mode === 'edit' ? 'Salvar Alterações' : 'Cadastrar Clube'}
+              {loading ? <SpinnerIcon className="w-6 h-6" /> : (mode === 'edit' ? 'Salvar Alterações' : 'Cadastrar Clube')}
             </button>
           </div>
         </form>

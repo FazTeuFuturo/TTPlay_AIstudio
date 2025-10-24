@@ -27,11 +27,12 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
     category.status === TournamentStatus.GROUP_STAGE ? 'groups' : 'bracket'
   );
 
-  const fetchData = () => {
-    setMatches(getMatches(currentCategory.id));
-    setUsers(getUsers());
+  // FIX: Made function async and awaited data fetching calls to pass data, not promises, to state setters.
+  const fetchData = async () => {
+    setMatches(await getMatches(currentCategory.id));
+    setUsers(await getUsers());
     if (currentCategory.format === TournamentFormat.GRUPOS_E_ELIMINATORIA) {
-      setGroups(getGroups(currentCategory.id));
+      setGroups(await getGroups(currentCategory.id));
     }
   };
 
@@ -45,8 +46,9 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
     }
   }, [currentCategory]);
 
-  const handleScoreUpdate = (matchId: string, setScores: { p1: number, p2: number }[]) => {
-    const updatedCategory = updateMatchResultAndAdvance(currentCategory.id, matchId, setScores);
+  // FIX: Made function async and awaited the result of updateMatchResultAndAdvance.
+  const handleScoreUpdate = async (matchId: string, setScores: { p1: number, p2: number }[]) => {
+    const updatedCategory = await updateMatchResultAndAdvance(currentCategory.id, matchId, setScores);
     if (updatedCategory) {
         setCurrentCategory(updatedCategory);
         onDataUpdate(); // Notify parent to refresh all data if needed

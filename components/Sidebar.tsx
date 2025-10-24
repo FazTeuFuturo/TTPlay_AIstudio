@@ -1,11 +1,9 @@
 import React from 'react';
-// FIX: Import Club type to use in props.
 import { User, Role, Club } from '../types';
 import { LayoutDashboardIcon, TrophyIcon, UserCircleIcon } from './Icons';
 
 interface SidebarProps {
   user: User;
-  // FIX: Add managedClub prop to display club-specific info.
   managedClub: Club | null;
   activeView: string;
   onNavigate: (view: 'dashboard' | 'events' | 'profile') => void;
@@ -42,7 +40,6 @@ const Sidebar: React.FC<SidebarProps> = ({ user, managedClub, activeView, onNavi
 
   const navItems = user.role === Role.PLAYER ? playerNav : adminNav;
 
-  // FIX: Use managedClub to display club info if available, similar to the Header component.
   const displayInfo = managedClub ? {
       name: managedClub.name,
       avatar: managedClub.logo || `https://picsum.photos/seed/${managedClub.id}/100/100`,

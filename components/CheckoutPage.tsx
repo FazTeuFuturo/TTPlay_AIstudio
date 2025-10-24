@@ -17,13 +17,14 @@ interface CartDetailItem {
 const CheckoutPage: React.FC<CheckoutPageProps> = ({ currentUser, onCheckout, onBack }) => {
   const [cartDetails, setCartDetails] = useState<CartDetailItem[]>([]);
 
-  const fetchCartDetails = () => {
+  const fetchCartDetails = async () => {
     const cart = getCart();
-    const details = cart.map(item => {
-      const category = getCategoryById(item.categoryId);
-      const event = getEventById(item.eventId);
+    const detailsPromises = cart.map(async (item) => {
+      const category = await getCategoryById(item.categoryId);
+      const event = await getEventById(item.eventId);
       return (category && event) ? { category, event } : null;
-    }).filter((item): item is CartDetailItem => item !== null);
+    });
+    const details = (await Promise.all(detailsPromises)).filter((item): item is CartDetailItem => item !== null);
     setCartDetails(details);
   };
 

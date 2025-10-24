@@ -5,7 +5,6 @@ import BottomNav from './BottomNav';
 
 interface AppLayoutProps {
   user: User;
-  // FIX: Add managedClub to props to pass it down to child components.
   managedClub: Club | null;
   activeView: string;
   onNavigate: (view: 'dashboard' | 'events' | 'profile') => void;
@@ -17,7 +16,6 @@ const AppLayout: React.FC<AppLayoutProps> = ({ user, managedClub, activeView, on
     <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex-grow flex flex-col md:flex-row">
       {/* Sidebar for desktop */}
       <div className="hidden md:block w-64 flex-shrink-0 pr-8 py-8">
-        {/* FIX: Pass managedClub to Sidebar. */}
         <Sidebar user={user} managedClub={managedClub} activeView={activeView} onNavigate={onNavigate} />
       </div>
       

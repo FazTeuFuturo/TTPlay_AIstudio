@@ -13,13 +13,18 @@ interface AddCategoryFlowProps {
 const AddCategoryFlow: React.FC<AddCategoryFlowProps> = ({ eventId, onFormClose }) => {
   const [flow, setFlow] = useState<'choice' | 'custom' | 'official'>('choice');
 
-  const handleAddOfficialCategory = (categoryData: Partial<Omit<TournamentCategory, 'id' | 'eventId'>>) => {
-    addCategoryToEvent({
-        eventId,
-        ...categoryData,
-    } as any);
-    alert(`Categoria "${categoryData.name}" adicionada com sucesso!`);
-    onFormClose();
+  const handleAddOfficialCategory = async (categoryData: Partial<Omit<TournamentCategory, 'id' | 'eventId'>>) => {
+    try {
+        await addCategoryToEvent({
+            eventId,
+            ...categoryData,
+        } as any);
+        alert(`Categoria "${categoryData.name}" adicionada com sucesso!`);
+        onFormClose();
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        alert(`Erro ao adicionar categoria: ${errorMessage}`);
+    }
   }
 
   const renderChoice = () => (

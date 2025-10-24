@@ -19,14 +19,14 @@ const CreateEventForm: React.FC<CreateEventFormProps> = ({ club, eventToEdit, on
   const isEditMode = !!eventToEdit;
 
   useEffect(() => {
-    if (isEditMode) {
+    if (isEditMode && eventToEdit) {
         setName(eventToEdit.name);
         setLocation(eventToEdit.location);
         setStartDate(eventToEdit.startDate);
     }
   }, [eventToEdit, isEditMode]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     if (!name || !location || !startDate) {
@@ -35,12 +35,12 @@ const CreateEventForm: React.FC<CreateEventFormProps> = ({ club, eventToEdit, on
     }
     
     try {
-        if (isEditMode) {
-            const updatedEvent = updateTournamentEvent(eventToEdit.id, { name, location, startDate });
+        if (isEditMode && eventToEdit) {
+            const updatedEvent = await updateTournamentEvent(eventToEdit.id, { name, location, startDate });
             alert('Evento atualizado com sucesso!');
             onFormClose(updatedEvent);
         } else {
-            const newEvent = addTournamentEvent({ name, location, startDate }, club);
+            const newEvent = await addTournamentEvent({ name, location, startDate }, club);
             alert('Evento criado com sucesso! Agora adicione as categorias.');
             onFormClose(newEvent);
         }

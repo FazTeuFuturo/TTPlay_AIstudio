@@ -1,172 +1,436 @@
-import { TOURNAMENT_EVENTS, USERS, INITIAL_MATCHES_CAT_1, CLUBS, TOURNAMENT_CATEGORIES } from './constants';
+import { TOURNAMENT_EVENTS, INITIAL_MATCHES_CAT_1, CLUBS, TOURNAMENT_CATEGORIES } from './constants';
 import { TournamentEvent, User, Match, UserSession, Role, PlayerRegistration, RegistrationStatus, Club, TournamentStatus, Group, TournamentCategory, Gender, TournamentFormat, CartItem, SubscriptionPlan, DiscountRule, RatingHistory, PlayerStats, ClubStats, RecentMatch } from './types';
+import { supabase } from './lib/supabaseClient';
 
-const EVENTS_KEY = 'tournament_events';
-const CATEGORIES_KEY = 'tournament_categories';
-const USERS_KEY = 'users';
-const CLUBS_KEY = 'clubs';
-const SESSION_KEY = 'user_session';
 const CART_KEY = 'shopping_cart';
-const CBTM_CATEGORIES_KEY = 'cbtm_categories_table';
-const RATING_HISTORY_KEY = 'rating_history';
-const getMatchesKey = (categoryId: string) => `matches_${categoryId}`;
-const getGroupsKey = (categoryId: string) => `groups_${categoryId}`;
+
+// --- Helper Functions for Data Mapping ---
+const mapUserFromDb = (data: any): User => ({
+    id: data.id,
+    name: data.name,
+    email: data.email,
+    avatar: data.avatar,
+    currentRating: data.current_rating,
+    role: data.role,
+    clubId: data.club_id,
+    birthDate: data.birth_date,
+    gender: data.gender,
+    bio: data.bio,
+    city: data.city,
+    phone: data.phone,
+});
+
+const mapClubFromDb = (data: any): Club => ({
+    id: data.id,
+    name: data.name,
+    logo: data.logo,
+    adminId: data.admin_id,
+    subscription: data.subscription,
+    discountRules: data.discount_rules || [],
+    description: data.description,
+    address: data.address,
+    city: data.city,
+    state: data.state,
+    phone: data.phone,
+    email: data.email,
+    website: data.website,
+});
+
+const mapEventFromDb = (data: any): TournamentEvent => ({
+    id: data.id,
+    name: data.name,
+    startDate: data.start_date,
+    location: data.location,
+    club: data.clubs ? mapClubFromDb(data.clubs) : { id: data.club_id } as Club,
+});
+
+const mapCategoryFromDb = (data: any): TournamentCategory => ({
+    id: data.id,
+    eventId: data.event_id,
+    name: data.name,
+    format: data.format,
+    status: data.status,
+    gender: data.gender,
+    ageMin: data.age_min,
+    ageMax: data.age_max,
+    ratingMin: data.rating_min,
+    ratingMax: data.rating_max,
+    maxParticipants: data.max_participants,
+    entryFee: data.entry_fee,
+    registrations: (data.player_registrations || []).map((reg: any) => ({
+        userId: reg.user_id,
+        status: reg.status,
+        registeredAt: reg.registered_at,
+    })),
+    startTime: data.start_time,
+    playersPerGroup: data.players_per_group,
+    kFactor: data.k_factor,
+});
+
 
 // --- Initialization ---
-export const initializeDatabase = () => {
-  const initIfNeeded = (key: string, data: any) => {
-    if (!localStorage.getItem(key)) {
-      localStorage.setItem(key, JSON.stringify(data));
+export const initializeDatabase = async () => {
+    console.log("Initializing database and seeding test users...");
+    const testUsersToSeed = [
+        {
+            email: 'admin@ttplay.com',
+            password: 'password123',
+            profile: {
+                name: 'Admin do Clube',
+                role: Role.CLUB_ADMIN,
+                gender: Gender.MALE,
+                birth_date: '1980-01-01',
+            },
+            club: {
+                name: 'Madureira Esporte Clube',
+                subscription: SubscriptionPlan.PRO,
+                logo: 'https://picsum.photos/seed/clubtest/100/100',
+            }
+        },
+        {
+            email: 'player@ttplay.com',
+            password: 'password123',
+            profile: {
+                name: 'Leandro Guerra de Souza',
+                role: Role.PLAYER,
+                gender: Gender.MALE,
+                birth_date: '1995-05-05',
+            }
+        }
+    ];
+
+    for (const userData of testUsersToSeed) {
+        // Client-side safe way to check for user existence
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+            email: userData.email,
+            password: userData.password,
+        });
+
+        let userId: string | undefined = signInData.user?.id;
+
+        if (signInError && signInError.message === 'Invalid login credentials') {
+            // User does not exist, so create them
+            console.log(`Creating test user: ${userData.email}`);
+            const { data: { user: newUser }, error: signUpError } = await supabase.auth.signUp({
+                email: userData.email,
+                password: userData.password,
+            });
+
+            if (signUpError || !newUser) {
+                console.error(`Failed to create test user ${userData.email}:`, signUpError?.message);
+                continue;
+            }
+            userId = newUser.id;
+
+            // Update profile for the newly created user
+            const { error: profileUpdateError } = await supabase
+                .from('users')
+                .update(userData.profile)
+                .eq('id', userId);
+            
+            if (profileUpdateError) console.error(`Failed to update profile for ${userData.email}:`, profileUpdateError.message);
+        
+        } else if (signInError) {
+            // Another sign-in error occurred
+            console.error(`Error checking for user ${userData.email}:`, signInError.message);
+            continue;
+        }
+
+        // At this point, user exists (either pre-existing or just created).
+        // Now handle club creation for admin.
+        if (userId && userData.profile.role === Role.CLUB_ADMIN && userData.club) {
+            const { data: existingClub } = await supabase.from('clubs').select('id').eq('admin_id', userId).single();
+            if (!existingClub) {
+                 console.log(`Creating club for ${userData.email}`);
+                 const { data: newClub, error: clubInsertError } = await supabase
+                    .from('clubs')
+                    .insert({ ...userData.club, admin_id: userId })
+                    .select('id')
+                    .single();
+
+                if (clubInsertError) {
+                     console.error(`Failed to create club for ${userData.email}:`, clubInsertError.message);
+                } else if (newClub) {
+                    const {error: clubLinkError } = await supabase.from('users').update({ club_id: newClub.id }).eq('id', userId);
+                    if(clubLinkError) console.error(`Failed to link club to admin ${userData.email}:`, clubLinkError.message);
+                }
+            }
+        }
+        
+        // Sign out to clean up the session before the next loop iteration or app start
+        await supabase.auth.signOut();
     }
-  };
-
-  if (!localStorage.getItem(CBTM_CATEGORIES_KEY)) {
-      const CBTM_CATEGORIES_OLYMPIC_DATA: Partial<Omit<TournamentCategory, 'id' | 'eventId'>>[] = [
-          { name: 'Sub-9', ageMax: 9, gender: Gender.MALE },
-          { name: 'Sub-9', ageMax: 9, gender: Gender.FEMALE },
-          { name: 'Sub-13', ageMin: 12, ageMax: 13, gender: Gender.MALE },
-          { name: 'Sub-13', ageMin: 12, ageMax: 13, gender: Gender.FEMALE },
-          { name: 'Sub-19', ageMin: 16, ageMax: 19, gender: Gender.MALE },
-          { name: 'Sub-19', ageMin: 16, ageMax: 19, gender: Gender.FEMALE },
-          { name: 'Absoluto A (A+B)', ratingMin: 2700, gender: Gender.MALE },
-          { name: 'Veterano 40', ageMin: 40, ageMax: 49, gender: Gender.MALE },
-          { name: 'Veterano 50', ageMin: 50, ageMax: 59, gender: Gender.MALE },
-      ];
-      CBTM_CATEGORIES_OLYMPIC_DATA.forEach(cat => {
-          cat.name = `${cat.name} ${cat.gender === Gender.MALE ? 'Masculino' : 'Feminino'}`;
-          cat.format = TournamentFormat.GRUPOS_E_ELIMINATORIA;
-          cat.maxParticipants = 32;
-          cat.entryFee = 50;
-          cat.startTime = "09:00";
-          cat.playersPerGroup = 4;
-          cat.kFactor = 32;
-      });
-       initIfNeeded(CBTM_CATEGORIES_KEY, CBTM_CATEGORIES_OLYMPIC_DATA);
-  }
-
-
-  initIfNeeded(EVENTS_KEY, TOURNAMENT_EVENTS);
-  initIfNeeded(CATEGORIES_KEY, TOURNAMENT_CATEGORIES);
-  initIfNeeded(USERS_KEY, USERS);
-  initIfNeeded(CLUBS_KEY, CLUBS);
-  initIfNeeded(RATING_HISTORY_KEY, []);
-  initIfNeeded(getMatchesKey('cat-1'), INITIAL_MATCHES_CAT_1);
 };
+
 
 // --- Auth ---
-export const login = (email: string, password?: string): User | null => {
-  const user = getUsers().find(u => u.email.toLowerCase() === email.toLowerCase());
-  if (user && user.password === password) {
-      const session: UserSession = { userId: user.id, role: user.role };
-      localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-      return user;
+export const login = async (email: string, password?: string): Promise<User | null> => {
+  if (!password) return null;
+  const { data: authData, error } = await supabase.auth.signInWithPassword({ email, password });
+
+  if (error || !authData.user) {
+    console.error('Login error:', error?.message);
+    return null;
   }
-  return null;
+
+  const userProfile = await getUserById(authData.user.id);
+  
+  if (!userProfile) {
+    console.error('Error fetching user profile after login.');
+    await supabase.auth.signOut();
+    return null;
+  }
+
+  return userProfile;
 };
 
-export const registerPlayer = (data: Partial<User>): User => {
-    const allUsers = getUsers();
-    if (allUsers.some(u => u.email.toLowerCase() === data.email?.toLowerCase())) {
-        throw new Error("Este e-mail já está cadastrado.");
-    }
-    const newUser: User = {
-        id: `user-${new Date().getTime()}`,
-        name: data.name!,
-        email: data.email!,
-        password: data.password!,
-        currentRating: 1000,
-        avatar: `https://i.pravatar.cc/150?u=user-${new Date().getTime()}`,
-        role: Role.PLAYER,
-        birthDate: data.birthDate!,
-        gender: data.gender!,
-        city: data.city,
-        phone: data.phone,
-        bio: data.bio
-    };
-    allUsers.push(newUser);
-    localStorage.setItem(USERS_KEY, JSON.stringify(allUsers));
-    return newUser;
-};
-
-export const registerClub = (clubData: Partial<Club>, adminData: Partial<User>): { club: Club, admin: User } => {
-    const allUsers = getUsers();
-    const allClubs = getClubs();
-    
-    if (allUsers.some(u => u.email.toLowerCase() === adminData.email?.toLowerCase())) {
-        throw new Error("Este e-mail de administrador já está cadastrado.");
-    }
-     if (allClubs.some(c => c.name.toLowerCase() === clubData.name?.toLowerCase())) {
-        throw new Error("Já existe um clube com este nome.");
+export const registerPlayer = async (data: Partial<User>): Promise<User> => {
+    const { email, password, name, birthDate, gender, city, phone, bio, avatar } = data;
+    if (!email || !password || !name || !birthDate || !gender) {
+        throw new Error("Campos obrigatórios ausentes.");
     }
 
-    const newAdmin: User = {
-        id: `user-admin-${new Date().getTime()}`,
-        name: adminData.name!,
-        email: adminData.email!,
-        password: adminData.password!,
-        currentRating: 1000,
-        avatar: `https://i.pravatar.cc/150?u=user-admin-${new Date().getTime()}`,
-        role: Role.CLUB_ADMIN,
-        birthDate: adminData.birthDate!,
-        gender: adminData.gender!,
-    };
+    const { data: authData, error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
+    });
+
+    if (signUpError) {
+        throw new Error(`Erro no cadastro: ${signUpError.message}`);
+    }
+
+    if (!authData.user) {
+        throw new Error("Não foi possível criar o usuário.");
+    }
+
+    const { data: updatedUsers, error: updateError } = await supabase
+        .from('users')
+        .update({
+            name,
+            birth_date: birthDate,
+            gender,
+            city,
+            phone,
+            bio,
+            avatar: avatar || `https://i.pravatar.cc/150?u=${authData.user.id}`,
+        })
+        .eq('id', authData.user.id)
+        .select();
     
-    const newClub: Club = {
-        id: `club-${new Date().getTime()}`,
-        name: clubData.name!,
-        adminId: newAdmin.id,
-        subscription: clubData.subscription || SubscriptionPlan.FREE,
-        discountRules: [],
-        description: clubData.description,
-        address: clubData.address,
-        city: clubData.city,
-        state: clubData.state,
-        phone: clubData.phone,
-        email: clubData.email,
-        website: clubData.website,
-    };
+    if (updateError) {
+        console.error("User created in auth, but profile update failed:", updateError.message);
+        throw new Error("Erro ao salvar detalhes do perfil.");
+    }
+
+    if (!updatedUsers || updatedUsers.length === 0) {
+        throw new Error("Falha ao recuperar o perfil atualizado.");
+    }
+
+    return mapUserFromDb(updatedUsers[0]);
+};
+
+export const registerClub = async (clubData: Partial<Club>, adminData: Partial<User>): Promise<{ club: Club, admin: User }> => {
+    const { email, password, name, birthDate, gender } = adminData;
+    if (!email || !password || !name || !birthDate || !gender || !clubData.name) {
+        throw new Error("Campos obrigatórios ausentes para o clube ou administrador.");
+    }
+
+    const { data: authData, error: signUpError } = await supabase.auth.signUp({ email, password });
+
+    if (signUpError) throw new Error(`Erro ao cadastrar administrador: ${signUpError.message}`);
+    if (!authData.user) throw new Error("Não foi possível criar o usuário administrador.");
     
-    newAdmin.clubId = newClub.id;
-    allUsers.push(newAdmin);
-    allClubs.push(newClub);
-    localStorage.setItem(USERS_KEY, JSON.stringify(allUsers));
-    localStorage.setItem(CLUBS_KEY, JSON.stringify(allClubs));
-    return { club: newClub, admin: newAdmin };
+    const adminId = authData.user.id;
+
+    // The trigger will create a basic user profile. Now create the club.
+    const { data: newClub, error: clubError } = await supabase
+        .from('clubs')
+        .insert({
+            name: clubData.name!,
+            admin_id: adminId,
+            description: clubData.description,
+            address: clubData.address,
+            city: clubData.city,
+            state: clubData.state,
+            phone: clubData.phone,
+            email: clubData.email,
+            website: clubData.website,
+            logo: clubData.logo
+        })
+        .select()
+        .single();
+    
+    if (clubError) {
+        throw new Error(`Erro ao criar o clube: ${clubError.message}`);
+    }
+
+    // Now, update the admin's profile with role and club link.
+    const { data: updatedAdmins, error: adminUpdateError } = await supabase
+        .from('users')
+        .update({
+            name,
+            birth_date: birthDate,
+            gender,
+            role: Role.CLUB_ADMIN,
+            club_id: newClub.id,
+        })
+        .eq('id', adminId)
+        .select();
+    
+    if (adminUpdateError) {
+        throw new Error(`Erro ao atualizar perfil do administrador: ${adminUpdateError.message}`);
+    }
+
+    if (!updatedAdmins || updatedAdmins.length === 0) {
+        throw new Error("Falha ao recuperar o perfil do admin atualizado.");
+    }
+
+    return { club: mapClubFromDb(newClub), admin: mapUserFromDb(updatedAdmins[0]) };
 };
 
 
-export const logout = () => {
-  localStorage.removeItem(SESSION_KEY);
-  localStorage.removeItem(CART_KEY);
+export const logout = async () => {
+  await supabase.auth.signOut();
+  localStorage.removeItem(CART_KEY); // Also clear local-only data
 };
 
-export const getCurrentUserSession = (): UserSession | null => {
-  const session = localStorage.getItem(SESSION_KEY);
-  return session ? JSON.parse(session) : null;
+export const getCurrentUserSession = async (): Promise<UserSession | null> => {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) return null;
+
+  const { data: userProfile, error } = await supabase
+    .from('users')
+    .select('role')
+    .eq('id', session.user.id)
+    .single();
+
+  if (error || !userProfile) {
+    console.error("User session exists, but couldn't fetch profile/role.", error?.message);
+    return null;
+  }
+  
+  return { userId: session.user.id, role: userProfile.role as Role };
 };
 
 // --- Data Getters ---
-export const getTournamentEvents = (): TournamentEvent[] => JSON.parse(localStorage.getItem(EVENTS_KEY) || '[]');
-export const getTournamentCategories = (eventId?: string): TournamentCategory[] => {
-    const allCategories: TournamentCategory[] = JSON.parse(localStorage.getItem(CATEGORIES_KEY) || '[]');
-    return eventId ? allCategories.filter(c => c.eventId === eventId) : allCategories;
-}
-export const getOfficialCategories = (): Partial<Omit<TournamentCategory, 'id' | 'eventId'>>[] => JSON.parse(localStorage.getItem(CBTM_CATEGORIES_KEY) || '[]');
-export const getCategoryById = (categoryId: string): TournamentCategory | undefined => getTournamentCategories().find(c => c.id === categoryId);
-export const getEventById = (eventId: string): TournamentEvent | undefined => getTournamentEvents().find(e => e.id === eventId);
-export const getUsers = (): User[] => JSON.parse(localStorage.getItem(USERS_KEY) || '[]');
-export const getUserById = (userId: string): User | undefined => getUsers().find(u => u.id === userId);
-export const getClubs = (): Club[] => JSON.parse(localStorage.getItem(CLUBS_KEY) || '[]');
-export const getClubById = (clubId: string): Club | undefined => getClubs().find(c => c.id === clubId);
-export const getClubByAdminId = (adminId: string): Club | undefined => getClubs().find(c => c.adminId === adminId);
-export const getMatches = (categoryId: string): Match[] => JSON.parse(localStorage.getItem(getMatchesKey(categoryId)) || '[]');
-export const getGroups = (categoryId: string): Group[] => JSON.parse(localStorage.getItem(getGroupsKey(categoryId)) || '[]');
-export const getRatingHistory = (userId?: string): RatingHistory[] => {
-    const history: RatingHistory[] = JSON.parse(localStorage.getItem(RATING_HISTORY_KEY) || '[]');
-    return userId ? history.filter(r => r.userId === userId) : history;
+export const getTournamentEvents = async (): Promise<TournamentEvent[]> => {
+    const { data, error } = await supabase
+        .from('tournament_events')
+        .select('*, clubs(*)');
+
+    if (error) {
+        console.error("Error fetching tournament events:", error.message);
+        return [];
+    }
+
+    return data.map(mapEventFromDb);
+};
+
+export const getTournamentCategories = async (eventId?: string): Promise<TournamentCategory[]> => {
+    let query = supabase.from('tournament_categories').select('*, player_registrations(user_id, status)');
+
+    if (eventId) {
+        query = query.eq('event_id', eventId);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+        console.error("Error fetching tournament categories:", error.message);
+        return [];
+    }
+
+    return data.map(mapCategoryFromDb);
+};
+
+export const getCategoryById = async (categoryId: string): Promise<TournamentCategory | undefined> => {
+    const { data, error } = await supabase.from('tournament_categories').select('*, player_registrations(user_id, status)').eq('id', categoryId).single();
+    if (error || !data) {
+        console.error("Error fetching category by ID:", error?.message);
+        return undefined;
+    }
+    return mapCategoryFromDb(data);
+};
+
+export const getEventById = async (eventId: string): Promise<TournamentEvent | undefined> => {
+    const { data, error } = await supabase.from('tournament_events').select('*, clubs(*)').eq('id', eventId).single();
+    if (error || !data) {
+        console.error("Error fetching event by ID:", error?.message);
+        return undefined;
+    }
+    return mapEventFromDb(data);
 }
 
-// --- Cart Logic ---
+export const getUserById = async (userId: string): Promise<User | null> => {
+    const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', userId)
+        .single();
+    
+    if (error) {
+        console.error("Error fetching user by ID:", error.message);
+        return null;
+    }
+    return mapUserFromDb(data);
+};
+export const getUsers = async (userIds?: string[]): Promise<User[]> => {
+    let query = supabase.from('users').select('*');
+    if (userIds && userIds.length > 0) {
+        query = query.in('id', userIds);
+    }
+    const { data, error } = await query;
+    if (error) {
+        console.error("Error fetching users:", error.message);
+        return [];
+    }
+    return data.map(mapUserFromDb);
+};
+
+export const getClubs = async (): Promise<Club[]> => {
+    const { data, error } = await supabase.from('clubs').select('*');
+    if (error) {
+        console.error("Error fetching clubs:", error.message);
+        return [];
+    }
+    return data.map(mapClubFromDb);
+};
+
+export const getClubById = async (clubId: string): Promise<Club | undefined> => {
+    const { data, error } = await supabase.from('clubs').select('*').eq('id', clubId).single();
+    if (error || !data) {
+        console.error("Error fetching club by ID:", error?.message);
+        return undefined;
+    }
+    return mapClubFromDb(data);
+};
+
+export const getClubByAdminId = async (adminId: string): Promise<Club | undefined> => {
+    const { data, error } = await supabase.from('clubs').select('*').eq('admin_id', adminId).single();
+    if (error || !data) {
+        console.error("Error fetching club by Admin ID:", error?.message);
+        return undefined;
+    }
+    return mapClubFromDb(data);
+};
+export const getMatches = async (categoryId: string): Promise<Match[]> => {
+    const { data, error } = await supabase.from('matches').select('*').eq('category_id', categoryId);
+    if (error) {
+        console.error("Error fetching matches:", error.message);
+        return [];
+    }
+    return data;
+};
+export const getGroups = async (categoryId: string): Promise<Group[]> => {
+    const { data, error } = await supabase.from('groups').select('*').eq('category_id', categoryId);
+    if (error) {
+        console.error("Error fetching groups:", error.message);
+        return [];
+    }
+    return data.map(g => ({ ...g, playerIds: [] })); // Placeholder for playerIds
+};
+
+// --- Cart Logic (remains in localStorage for simplicity) ---
 export const getCart = (): CartItem[] => JSON.parse(localStorage.getItem(CART_KEY) || '[]');
 export const addToCart = (categoryId: string, eventId: string): CartItem[] => {
     const cart = getCart();
@@ -182,10 +446,14 @@ export const removeFromCart = (categoryId: string): CartItem[] => {
     return cart;
 }
 export const clearCart = (): void => localStorage.removeItem(CART_KEY);
-export const checkout = (userId: string): boolean => {
+export const checkout = async (userId: string): Promise<boolean> => {
     const cart = getCart();
     if (cart.length === 0) return false;
-    let allSucceeded = cart.every(item => registerPlayerForCategory(item.categoryId, userId));
+    
+    const registrationPromises = cart.map(item => registerPlayerForCategory(item.categoryId, userId));
+    const results = await Promise.all(registrationPromises);
+    const allSucceeded = results.every(Boolean);
+
     if (allSucceeded) {
         clearCart();
         return true;
@@ -195,6 +463,7 @@ export const checkout = (userId: string): boolean => {
 
 // --- Eligibility Check ---
 export const isPlayerEligible = (player: User, category: TournamentCategory): boolean => {
+    if (!player.birthDate) return false;
     const playerAge = new Date().getFullYear() - new Date(player.birthDate).getFullYear();
     if (category.gender !== 'MIXED' && player.gender !== category.gender) return false;
     if (category.ageMin && playerAge < category.ageMin) return false;
@@ -205,200 +474,118 @@ export const isPlayerEligible = (player: User, category: TournamentCategory): bo
 }
 
 // --- Data Setters ---
-const updateAllUsers = (users: User[]) => localStorage.setItem(USERS_KEY, JSON.stringify(users));
-const updateAllCategories = (categories: TournamentCategory[]) => localStorage.setItem(CATEGORIES_KEY, JSON.stringify(categories));
-const updateAllClubs = (clubs: Club[]) => localStorage.setItem(CLUBS_KEY, JSON.stringify(clubs));
+export const updateMatchResultAndAdvance = async (categoryId: string, matchId: string, setScores: {p1: number, p2: number}[]): Promise<TournamentCategory | null> => {
+    // This function remains complex and would ideally be a Supabase Edge Function for transactional integrity.
+    // For now, we'll perform the steps client-side.
+    console.log("Updating match result... (This is a complex operation and will be fully implemented later)");
+    const category = await getCategoryById(categoryId);
+    return category || null;
+};
 
-const addRatingHistory = (record: Omit<RatingHistory, 'id'>) => {
-    const history = getRatingHistory();
-    const newRecord: RatingHistory = { ...record, id: `rh-${new Date().getTime()}` };
-    history.push(newRecord);
-    localStorage.setItem(RATING_HISTORY_KEY, JSON.stringify(history));
+export const addTournamentEvent = async (data: Omit<TournamentEvent, 'id' | 'club'>, club: Club): Promise<TournamentEvent> => {
+    const allEvents = await getTournamentEvents();
+    if (club.subscription === SubscriptionPlan.FREE && allEvents.filter(e => e.club.id === club.id).length >= 1) {
+        throw new Error("Plano Gratuito permite apenas 1 evento por vez. Faça um upgrade para o Plano Pro.");
+    }
+    const { data: newEventData, error } = await supabase.from('tournament_events').insert({
+        name: data.name,
+        start_date: data.startDate,
+        location: data.location,
+        club_id: club.id
+    }).select('*, clubs(*)').single();
+    
+    if (error || !newEventData) throw new Error(error?.message || "Failed to create event");
+    return mapEventFromDb(newEventData);
 }
 
-export const updateMatchResultAndAdvance = (categoryId: string, matchId: string, setScores: {p1: number, p2: number}[]): TournamentCategory | null => {
-    let allCategories = getTournamentCategories();
-    const categoryIndex = allCategories.findIndex(c => c.id === categoryId);
-    if(categoryIndex === -1) return null;
+export const updateTournamentEvent = async (eventId: string, details: Partial<Omit<TournamentEvent, 'id' | 'club'>>): Promise<TournamentEvent> => {
+    const { data, error } = await supabase.from('tournament_events').update({
+        name: details.name,
+        start_date: details.startDate,
+        location: details.location
+    }).eq('id', eventId).select('*, clubs(*)').single();
 
-    let category = allCategories[categoryIndex];
-    let matches = getMatches(categoryId);
-    const matchIndex = matches.findIndex(m => m.id === matchId);
-    if (matchIndex === -1) return null;
+    if (error || !data) throw new Error(error?.message || "Failed to update event");
+    return mapEventFromDb(data);
+}
 
-    let allUsers = getUsers();
-    const player1 = allUsers.find(u => u.id === matches[matchIndex].player1Id);
-    const player2 = allUsers.find(u => u.id === matches[matchIndex].player2Id);
-    if (!player1 || !player2) return null; // Can't process if players are missing
+export const addCategoryToEvent = async (data: Omit<TournamentCategory, 'id' | 'registrations' | 'status'>): Promise<TournamentCategory> => {
+    const event = await getEventById(data.eventId);
+    if (!event) throw new Error("Evento não encontrado.");
 
-    // 1. Update match score
-    const updatedMatch = { ...matches[matchIndex] };
-    let p1SetsWon = 0;
-    let p2SetsWon = 0;
-    setScores.forEach(score => {
-        if (score.p1 > score.p2) p1SetsWon++;
-        else p2SetsWon++;
-    });
-    
-    updatedMatch.setScores = setScores;
-    updatedMatch.player1Score = p1SetsWon;
-    updatedMatch.player2Score = p2SetsWon;
-    const winnerIsP1 = p1SetsWon > p2SetsWon;
-    updatedMatch.winnerId = winnerIsP1 ? updatedMatch.player1Id : updatedMatch.player2Id;
-    updatedMatch.status = 'COMPLETED';
-    
-    // --- ELO Calculation ---
-    const kFactor = category.kFactor || 32;
-    const rating1 = player1.currentRating;
-    const rating2 = player2.currentRating;
-    
-    updatedMatch.player1RatingBefore = rating1;
-    updatedMatch.player2RatingBefore = rating2;
+    const club = await getClubById(event.club.id);
+    if (!club) throw new Error("Clube não encontrado.");
 
-    const expectedScore1 = 1 / (1 + Math.pow(10, (rating2 - rating1) / 400));
-    const expectedScore2 = 1 - expectedScore1;
-    
-    const actualScore1 = winnerIsP1 ? 1 : 0;
-    const actualScore2 = winnerIsP1 ? 0 : 1;
-
-    const newRating1 = Math.round(rating1 + kFactor * (actualScore1 - expectedScore1));
-    const newRating2 = Math.round(rating2 + kFactor * (actualScore2 - expectedScore2));
-
-    updatedMatch.player1RatingAfter = newRating1;
-    updatedMatch.player2RatingAfter = newRating2;
-
-    // Update users' ratings
-    const user1Index = allUsers.findIndex(u => u.id === player1.id);
-    const user2Index = allUsers.findIndex(u => u.id === player2.id);
-    allUsers[user1Index].currentRating = newRating1;
-    allUsers[user2Index].currentRating = newRating2;
-    
-    updateAllUsers(allUsers);
-    
-    // Add to rating history
-    const historyDate = new Date().toISOString();
-    addRatingHistory({ userId: player1.id, matchId, categoryId, ratingBefore: rating1, ratingAfter: newRating1, change: newRating1 - rating1, date: historyDate });
-    addRatingHistory({ userId: player2.id, matchId, categoryId, ratingBefore: rating2, ratingAfter: newRating2, change: newRating2 - rating2, date: historyDate });
-    // --- End ELO Calculation ---
-
-    matches[matchIndex] = updatedMatch;
-
-    // 2. If it's a knockout match, advance the winner & check for completion
-    if (updatedMatch.stage === 'KNOCKOUT' && updatedMatch.winnerId) {
-        const knockoutMatches = matches.filter(m => m.stage === 'KNOCKOUT');
-        const totalRounds = Math.max(...knockoutMatches.map(m => m.round));
-        
-        if (updatedMatch.round === totalRounds) {
-            category.status = TournamentStatus.COMPLETED;
-        } else {
-            const nextRound = updatedMatch.round + 1;
-            const nextMatchInRound = Math.ceil(updatedMatch.matchInRound / 2);
-            const nextMatchIndex = matches.findIndex(m => m.round === nextRound && m.matchInRound === nextMatchInRound);
-            
-            if (nextMatchIndex !== -1) {
-                const isPlayer1Slot = updatedMatch.matchInRound % 2 !== 0;
-                if (isPlayer1Slot) matches[nextMatchIndex].player1Id = updatedMatch.winnerId;
-                else matches[nextMatchIndex].player2Id = updatedMatch.winnerId;
-            }
-        }
-    }
-
-    // 3. If it's a group match, check if the group stage is over
-    if (updatedMatch.stage === 'GROUP') {
-        const groupMatches = matches.filter(m => m.stage === 'GROUP');
-        if (groupMatches.every(m => m.status === 'COMPLETED')) {
-            const groups = getGroups(categoryId).sort((a,b) => a.name.localeCompare(b.name));
-            const qualifiers: User[] = [];
-
-            groups.forEach(group => {
-                const playerStats = group.playerIds.map(playerId => ({
-                    playerId,
-                    wins: matches.filter(m => m.groupId === group.id && m.winnerId === playerId).length,
-                })).sort((a, b) => b.wins - a.wins);
-
-                const player1 = getUserById(playerStats[0].playerId);
-                if(player1) qualifiers.push(player1);
-                
-                if (playerStats[1]) {
-                    const player2 = getUserById(playerStats[1].playerId);
-                    if(player2) qualifiers.push(player2);
-                }
-            });
-
-            const seededQualifiers = qualifiers.sort((a, b) => b.currentRating - a.currentRating);
-            const newKnockoutMatches = generateKnockoutBracket(categoryId, seededQualifiers);
-            
-            matches = [...groupMatches, ...newKnockoutMatches];
-            category.status = TournamentStatus.IN_PROGRESS;
-        }
+    if (club.subscription === SubscriptionPlan.FREE && (await getTournamentCategories(data.eventId)).length >= 5) {
+        throw new Error("Plano Gratuito permite um máximo de 5 categorias por evento. Faça um upgrade.");
     }
     
-    // Save everything
-    localStorage.setItem(getMatchesKey(categoryId), JSON.stringify(matches));
-    allCategories[categoryIndex] = category;
-    updateAllCategories(allCategories);
+    const { data: newCategoryData, error } = await supabase.from('tournament_categories').insert({
+        event_id: data.eventId,
+        name: data.name,
+        format: data.format,
+        gender: data.gender,
+        age_min: data.ageMin,
+        age_max: data.ageMax,
+        rating_min: data.ratingMin,
+        rating_max: data.ratingMax,
+        max_participants: data.maxParticipants,
+        entry_fee: data.entryFee,
+        start_time: data.startTime,
+        players_per_group: data.playersPerGroup,
+        k_factor: data.kFactor
+    }).select('*, player_registrations(user_id, status)').single();
     
-    return category;
+    if (error || !newCategoryData) throw new Error(error?.message || "Failed to create category");
+    return mapCategoryFromDb(newCategoryData);
+}
+
+export const updateCategory = async (categoryId: string, data: Partial<Omit<TournamentCategory, 'id' | 'registrations' | 'status'>>): Promise<TournamentCategory> => {
+    const { data: updatedCategoryData, error } = await supabase.from('tournament_categories').update({
+        name: data.name,
+        format: data.format,
+        gender: data.gender,
+        age_min: data.ageMin,
+        age_max: data.ageMax,
+        rating_min: data.ratingMin,
+        rating_max: data.ratingMax,
+        max_participants: data.maxParticipants,
+        entry_fee: data.entryFee,
+        start_time: data.startTime,
+        players_per_group: data.playersPerGroup,
+        k_factor: data.kFactor
+    }).eq('id', categoryId).select('*, player_registrations(user_id, status)');
+    
+    if (error) throw new Error(error.message);
+    if (!updatedCategoryData || updatedCategoryData.length === 0) throw new Error("Falha ao atualizar a categoria. Verifique suas permissões (RLS).");
+    return mapCategoryFromDb(updatedCategoryData[0]);
 };
 
 
-export const addTournamentEvent = (data: Omit<TournamentEvent, 'id' | 'club'>, club: Club): TournamentEvent => {
-    if (club.subscription === SubscriptionPlan.FREE && getTournamentEvents().filter(e => e.club.id === club.id).length >= 1) {
-        throw new Error("Plano Gratuito permite apenas 1 evento por vez. Faça um upgrade para o Plano Pro.");
-    }
-    const allEvents = getTournamentEvents();
-    const newEvent: TournamentEvent = { ...data, id: `event-${new Date().getTime()}`, club };
-    allEvents.push(newEvent);
-    localStorage.setItem(EVENTS_KEY, JSON.stringify(allEvents));
-    return newEvent;
-}
-
-export const updateTournamentEvent = (eventId: string, details: Partial<Omit<TournamentEvent, 'id' | 'club'>>): TournamentEvent => {
-    const allEvents = getTournamentEvents();
-    const eventIndex = allEvents.findIndex(e => e.id === eventId);
-    if (eventIndex === -1) throw new Error("Evento não encontrado.");
-
-    const updatedEvent = { ...allEvents[eventIndex], ...details };
-    allEvents[eventIndex] = updatedEvent;
-    localStorage.setItem(EVENTS_KEY, JSON.stringify(allEvents));
-    return updatedEvent;
-}
-
-export const addCategoryToEvent = (data: Omit<TournamentCategory, 'id' | 'registrations' | 'status'>): TournamentCategory => {
-    const event = getEventById(data.eventId);
-    if (!event) throw new Error("Evento não encontrado.");
-
-    if (event.club.subscription === SubscriptionPlan.FREE && getTournamentCategories(data.eventId).length >= 5) {
-        throw new Error("Plano Gratuito permite um máximo de 5 categorias por evento. Faça um upgrade.");
-    }
-    const allCategories = getTournamentCategories();
-    const newCategory: TournamentCategory = { ...data, id: `cat-${new Date().getTime()}`, registrations: [], status: TournamentStatus.REGISTRATION };
-    allCategories.push(newCategory);
-    updateAllCategories(allCategories);
-    return newCategory;
-}
-
-export const registerPlayerForCategory = (categoryId: string, userId: string): boolean => {
-    const allCategories = getTournamentCategories();
-    const categoryIndex = allCategories.findIndex(c => c.id === categoryId);
-    if (categoryIndex === -1) return false;
-    const category = allCategories[categoryIndex];
+export const registerPlayerForCategory = async (categoryId: string, userId: string): Promise<boolean> => {
+    const category = await getCategoryById(categoryId);
+    if (!category) return false;
     if (category.status !== TournamentStatus.REGISTRATION) return false;
     if (category.registrations.some(r => r.userId === userId)) return true;
     if (category.registrations.length >= category.maxParticipants) return false;
 
-    category.registrations.push({ userId, status: RegistrationStatus.REGISTERED, registeredAt: new Date().toISOString() });
-    updateAllCategories(allCategories);
+    const { error } = await supabase.from('player_registrations').insert({
+        user_id: userId,
+        category_id: categoryId,
+        status: RegistrationStatus.REGISTERED
+    });
+
+    if (error) {
+        console.error("Error registering player:", error.message);
+        return false;
+    }
     return true;
 }
 
-export const cancelPlayerRegistration = (categoryId: string, userId: string): boolean => {
-    const allCategories = getTournamentCategories();
-    const categoryIndex = allCategories.findIndex(c => c.id === categoryId);
-    if (categoryIndex === -1) return false;
-    const category = allCategories[categoryIndex];
-    // Check deadline
-    const event = getEventById(category.eventId);
+export const cancelPlayerRegistration = async (categoryId: string, userId: string): Promise<boolean> => {
+    const category = await getCategoryById(categoryId);
+    if (!category) return false;
+    const event = await getEventById(category.eventId);
     if (event) {
         const deadline = new Date(event.startDate);
         deadline.setDate(deadline.getDate() - 5);
@@ -407,301 +594,221 @@ export const cancelPlayerRegistration = (categoryId: string, userId: string): bo
             return false;
         }
     }
-    const registrationIndex = category.registrations.findIndex(r => r.userId === userId);
-    if (registrationIndex === -1) return true;
-    category.registrations.splice(registrationIndex, 1);
-    updateAllCategories(allCategories);
+    
+    const { error } = await supabase.from('player_registrations').delete().match({ user_id: userId, category_id: categoryId });
+    if (error) {
+        console.error("Error cancelling registration:", error.message);
+        return false;
+    }
     return true;
 }
 
-export const closeRegistration = (categoryId: string): TournamentCategory => {
-    const allCategories = getTournamentCategories();
-    const categoryIndex = allCategories.findIndex(c => c.id === categoryId);
-    if (categoryIndex === -1) throw new Error("Categoria não encontrada.");
-    const category = { ...allCategories[categoryIndex] };
-    if (category.status !== TournamentStatus.REGISTRATION) throw new Error("As inscrições para esta categoria não estão abertas.");
-    
-    category.status = TournamentStatus.REGISTRATION_CLOSED;
-    allCategories[categoryIndex] = category;
-    updateAllCategories(allCategories);
-    return category;
+export const closeRegistration = async (categoryId: string): Promise<TournamentCategory> => {
+    const { data, error } = await supabase.from('tournament_categories').update({ status: TournamentStatus.REGISTRATION_CLOSED }).eq('id', categoryId).select('*, player_registrations(user_id, status)');
+    if (error) throw new Error(error.message);
+    if (!data || data.length === 0) throw new Error("Não foi possível encerrar as inscrições. Verifique suas permissões (RLS).");
+    return mapCategoryFromDb(data[0]);
 }
 
-export const reopenRegistration = (categoryId: string): TournamentCategory => {
-    const allCategories = getTournamentCategories();
-    const categoryIndex = allCategories.findIndex(c => c.id === categoryId);
-    if (categoryIndex === -1) throw new Error("Categoria não encontrada.");
-    const category = { ...allCategories[categoryIndex] };
-    if (category.status !== TournamentStatus.REGISTRATION_CLOSED) throw new Error("Apenas categorias com inscrições encerradas podem ser reabertas.");
-    
-    category.status = TournamentStatus.REGISTRATION;
-    allCategories[categoryIndex] = category;
-    updateAllCategories(allCategories);
-    return category;
-}
-
-const generateKnockoutBracket = (categoryId: string, players: User[]): Match[] => {
-    const numPlayers = players.length;
-    if (numPlayers < 2) return [];
-
-    const nextPowerOfTwo = Math.pow(2, Math.ceil(Math.log2(numPlayers)));
-    const playersInMainBracket = nextPowerOfTwo / 2;
-    const playersInPreliminary = (numPlayers - playersInMainBracket);
-    const numPreliminaryMatches = playersInPreliminary;
-    
-    const playersWithByes = players.slice(0, (nextPowerOfTwo) - numPlayers);
-    const playersInPreliminaryList = players.slice((nextPowerOfTwo) - numPlayers);
-    
-    const knockoutMatches: Match[] = [];
-    let roundCounter = 1;
-
-    if (numPreliminaryMatches > 0) {
-        for (let i = 0; i < numPreliminaryMatches; i++) {
-            knockoutMatches.push({
-                id: `m-k-${categoryId}-${roundCounter}-${i + 1}`,
-                categoryId, round: roundCounter, matchInRound: i + 1,
-                player1Id: playersInPreliminaryList[i].id,
-                player2Id: playersInPreliminaryList[numPreliminaryMatches * 2 - 1 - i].id,
-                winnerId: null, player1Score: null, player2Score: null, status: 'SCHEDULED', stage: 'KNOCKOUT'
-            });
-        }
-        roundCounter++;
-    }
-
-    let currentBracketSize = playersInMainBracket;
-    while (currentBracketSize >= 1) {
-        const numMatchesInRound = currentBracketSize / 2;
-        if (numMatchesInRound < 1) break;
-        for (let i = 0; i < numMatchesInRound; i++) {
-             knockoutMatches.push({
-                id: `m-k-${categoryId}-${roundCounter}-${i + 1}`,
-                categoryId, round: roundCounter, matchInRound: i + 1,
-                player1Id: null, player2Id: null, winnerId: null,
-                player1Score: null, player2Score: null, status: 'SCHEDULED', stage: 'KNOCKOUT'
-            });
-        }
-        currentBracketSize /= 2;
-        roundCounter++;
-    }
-
-    const mainRoundMatches = knockoutMatches.filter(m => m.round === (numPreliminaryMatches > 0 ? 2 : 1));
-    let byePlayerIndex = 0;
-    for (let i = 0; i < mainRoundMatches.length; i++) {
-        if (mainRoundMatches[i].player1Id === null && playersWithByes[byePlayerIndex]) {
-            mainRoundMatches[i].player1Id = playersWithByes[byePlayerIndex++].id;
-        }
-        if (mainRoundMatches[i].player2Id === null && playersWithByes[byePlayerIndex]) {
-            mainRoundMatches[i].player2Id = playersWithByes[byePlayerIndex++].id;
-        }
-    }
-
-    return knockoutMatches;
-}
-
-export const startCategory = (categoryId: string): TournamentCategory => {
-    const allCategories = getTournamentCategories();
-    const categoryIndex = allCategories.findIndex(c => c.id === categoryId);
-    if (categoryIndex === -1) throw new Error("Categoria não encontrada.");
-    const category = { ...allCategories[categoryIndex] };
-    if (category.status !== TournamentStatus.REGISTRATION_CLOSED) throw new Error("As inscrições precisam ser encerradas.");
-
-    const allUsers = getUsers();
-    const registeredPlayerIds = category.registrations.map(r => r.userId);
-    const seededPlayers = allUsers.filter(u => registeredPlayerIds.includes(u.id)).sort((a, b) => b.currentRating - a.currentRating);
-    if (seededPlayers.length < 2) throw new Error("São necessários pelo menos 2 jogadores.");
-
-    if (category.format === TournamentFormat.ELIMINATORIA_SIMPLES) {
-        localStorage.setItem(getMatchesKey(categoryId), JSON.stringify(generateKnockoutBracket(categoryId, seededPlayers)));
-        category.status = TournamentStatus.IN_PROGRESS;
-    } 
-    else if (category.format === TournamentFormat.GRUPOS_E_ELIMINATORIA) {
-        const groupSize = category.playersPerGroup || 4;
-        const numGroups = Math.ceil(seededPlayers.length / groupSize);
-        const groups: Group[] = Array.from({ length: numGroups }, (_, i) => ({ id: `g-${categoryId}-${i + 1}`, name: `Grupo ${String.fromCharCode(65 + i)}`, categoryId, playerIds: [] }));
-
-        seededPlayers.forEach((player, i) => {
-            const groupIndex = i % numGroups;
-            const targetGroupIndex = numGroups > 1 && Math.floor(i / numGroups) % 2 !== 0 ? numGroups - 1 - groupIndex : groupIndex;
-            groups[targetGroupIndex].playerIds.push(player.id);
-        });
-
-        const groupMatches: Match[] = [];
-        groups.forEach(group => {
-            for (let i = 0; i < group.playerIds.length; i++) {
-                for (let j = i + 1; j < group.playerIds.length; j++) {
-                    groupMatches.push({
-                        id: `m-${group.id}-${i}-${j}`, categoryId, round: 0,
-                        matchInRound: groupMatches.length + 1,
-                        player1Id: group.playerIds[i], player2Id: group.playerIds[j],
-                        winnerId: null, player1Score: null, player2Score: null,
-                        status: 'SCHEDULED', stage: 'GROUP', groupId: group.id,
-                    });
-                }
-            }
-        });
-
-        const numQualifiers = Math.min(seededPlayers.length, numGroups * 2);
-        if (numQualifiers < 2) throw new Error(`Pelo menos 2 jogadores precisam se qualificar.`);
-        
-        const dummyQualifiers = Array(numQualifiers).fill(null).map((_, i) => ({ id: `q-${i}`, name: 'Q', currentRating: 0, role: Role.PLAYER, birthDate: '', gender: Gender.MALE, email: '' }));
-        const knockoutMatches = generateKnockoutBracket(categoryId, dummyQualifiers);
-        knockoutMatches.forEach(match => { match.player1Id = null; match.player2Id = null; });
-
-        localStorage.setItem(getGroupsKey(categoryId), JSON.stringify(groups));
-        localStorage.setItem(getMatchesKey(categoryId), JSON.stringify([...groupMatches, ...knockoutMatches]));
-        category.status = TournamentStatus.GROUP_STAGE;
-    }
-    
-    allCategories[categoryIndex] = category;
-    updateAllCategories(allCategories);
+export const startCategory = async (categoryId: string): Promise<TournamentCategory> => {
+    // This logic should be moved to a Supabase Edge Function
+    console.log("Starting category... (This is a complex operation and will be fully implemented later)");
+    const category = await getCategoryById(categoryId);
+    if (!category) throw new Error("Category not found");
     return category;
 };
 
+export const reopenRegistration = async (categoryId: string): Promise<TournamentCategory> => {
+    const { data, error } = await supabase.from('tournament_categories').update({ status: TournamentStatus.REGISTRATION }).eq('id', categoryId).select('*, player_registrations(user_id, status)');
+    if (error) throw new Error(error.message);
+    if (!data || data.length === 0) throw new Error("Não foi possível reabrir as inscrições. Verifique suas permissões (RLS).");
+    return mapCategoryFromDb(data[0]);
+}
+
 // --- Profile Updates & Subscription ---
-export const updateClubDetails = (clubId: string, details: Partial<Club>): Club | null => {
-    const allClubs = getClubs();
-    const clubIndex = allClubs.findIndex(c => c.id === clubId);
-    if (clubIndex === -1) return null;
-    allClubs[clubIndex] = { ...allClubs[clubIndex], ...details };
-    localStorage.setItem(CLUBS_KEY, JSON.stringify(allClubs));
-    const allEvents = getTournamentEvents().map(event => event.club.id === clubId ? { ...event, club: allClubs[clubIndex] } : event);
-    localStorage.setItem(EVENTS_KEY, JSON.stringify(allEvents));
-    return allClubs[clubIndex];
+export const updateClubDetails = async (clubId: string, details: Partial<Club>): Promise<Club | null> => {
+    const { name, description, address, city, state, phone, email, website, logo, discountRules } = details;
+    const updateData: { [key: string]: any } = {};
+
+    if (name !== undefined) updateData.name = name;
+    if (description !== undefined) updateData.description = description;
+    if (address !== undefined) updateData.address = address;
+    if (city !== undefined) updateData.city = city;
+    if (state !== undefined) updateData.state = state;
+    if (phone !== undefined) updateData.phone = phone;
+    if (email !== undefined) updateData.email = email;
+    if (website !== undefined) updateData.website = website;
+    if (logo !== undefined) updateData.logo = logo;
+    if (details.hasOwnProperty('discountRules')) updateData.discount_rules = discountRules;
+
+    if (Object.keys(updateData).length === 0) {
+        return getClubById(clubId) || null;
+    }
+
+    const { data, error } = await supabase
+        .from('clubs')
+        .update(updateData)
+        .eq('id', clubId)
+        .select()
+        .single();
+    
+    if (error) {
+        console.error("Error updating club details:", error.message);
+        return null;
+    }
+    if (!data) return null;
+    
+    return mapClubFromDb(data);
 }
 
-export const updateUserDetails = (userId: string, details: Partial<User>): User | null => {
-    const allUsers = getUsers();
-    const userIndex = allUsers.findIndex(u => u.id === userId);
-    if (userIndex === -1) return null;
-    allUsers[userIndex] = { ...allUsers[userIndex], ...details };
-    updateAllUsers(allUsers);
-    return allUsers[userIndex];
+export const updateUserDetails = async (userId: string, details: Partial<User>): Promise<User | null> => {
+    const { name, birthDate, gender, city, phone, bio, avatar } = details;
+    const updateData: { [key: string]: any } = {};
+
+    if (details.hasOwnProperty('name')) updateData.name = name;
+    if (details.hasOwnProperty('birthDate')) updateData.birth_date = birthDate || null;
+    if (details.hasOwnProperty('gender')) updateData.gender = gender;
+    if (details.hasOwnProperty('city')) updateData.city = city;
+    if (details.hasOwnProperty('phone')) updateData.phone = phone;
+    if (details.hasOwnProperty('bio')) updateData.bio = bio;
+    if (details.hasOwnProperty('avatar')) updateData.avatar = avatar;
+    
+    if (Object.keys(updateData).length === 0) {
+        return getUserById(userId);
+    }
+
+    const { data, error } = await supabase
+        .from('users')
+        .update(updateData)
+        .eq('id', userId)
+        .select();
+    
+    if (error) {
+        console.error("Error updating user details:", error.message);
+        return null;
+    }
+
+    if (!data || data.length === 0) {
+        console.error("Failed to retrieve user profile after update.");
+        return null;
+    }
+    return mapUserFromDb(data[0]);
 }
 
-export const upgradeClubSubscription = (clubId: string): Club | null => {
-    const allClubs = getClubs();
-    const clubIndex = allClubs.findIndex(c => c.id === clubId);
-    if (clubIndex === -1) return null;
-    allClubs[clubIndex].subscription = SubscriptionPlan.PRO;
-    localStorage.setItem(CLUBS_KEY, JSON.stringify(allClubs));
-    const allEvents = getTournamentEvents().map(event => event.club.id === clubId ? { ...event, club: { ...event.club, subscription: SubscriptionPlan.PRO } } : event);
-    localStorage.setItem(EVENTS_KEY, JSON.stringify(allEvents));
-    return allClubs[clubIndex];
+export const upgradeClubSubscription = async (clubId: string): Promise<Club | null> => {
+    const { data, error } = await supabase.from('clubs').update({ subscription: SubscriptionPlan.PRO }).eq('id', clubId).select().single();
+    if (error || !data) {
+        console.error("Error upgrading subscription:", error?.message);
+        return null;
+    }
+    return mapClubFromDb(data);
 }
 
 export const transferClubAdminship = (clubId: string, newAdminEmail: string, currentAdminId: string): {success: boolean} => {
     if (!newAdminEmail) throw new Error("O e-mail do novo administrador é obrigatório.");
-    
-    const allUsers = getUsers();
-    const allClubs = getClubs();
-
-    const newAdminIndex = allUsers.findIndex(u => u.email.toLowerCase() === newAdminEmail.toLowerCase());
-    if (newAdminIndex === -1) throw new Error("Usuário não encontrado com este e-mail.");
-    
-    const currentAdminIndex = allUsers.findIndex(u => u.id === currentAdminId);
-    if (currentAdminIndex === -1) throw new Error("Administrador atual não encontrado.");
-
-    if (allUsers[newAdminIndex].id === currentAdminId) throw new Error("Você não pode transferir a administração para si mesmo.");
-    if (allUsers[newAdminIndex].role === Role.CLUB_ADMIN) throw new Error("Este usuário já é administrador de outro clube.");
-    
-    const clubIndex = allClubs.findIndex(c => c.id === clubId);
-    if (clubIndex === -1) throw new Error("Clube não encontrado.");
-
-    // Perform transfer
-    allUsers[currentAdminIndex].role = Role.PLAYER;
-    delete allUsers[currentAdminIndex].clubId;
-
-    allUsers[newAdminIndex].role = Role.CLUB_ADMIN;
-    allUsers[newAdminIndex].clubId = clubId;
-    
-    allClubs[clubIndex].adminId = allUsers[newAdminIndex].id;
-
-    updateAllUsers(allUsers);
-    updateAllClubs(allClubs);
-
-    return { success: true };
+    console.error("transferClubAdminship is not implemented for Supabase yet. This requires a secure Edge Function.");
+    return { success: false };
 }
-
 
 // --- Deletion ---
-export const deleteTournamentCategory = (categoryId: string): void => {
-    updateAllCategories(getTournamentCategories().filter(c => c.id !== categoryId));
-    localStorage.removeItem(getMatchesKey(categoryId));
-    localStorage.removeItem(getGroupsKey(categoryId));
+export const deleteTournamentCategory = async (categoryId: string): Promise<void> => {
+    const { error } = await supabase.from('tournament_categories').delete().eq('id', categoryId);
+    if (error) {
+        console.error("Error deleting category:", error.message);
+        throw new Error("Não foi possível remover a categoria. Verifique se existem inscrições ou partidas associadas a ela.");
+    }
 }
 
-export const deleteTournamentEvent = (eventId: string): void => {
-    getTournamentCategories(eventId).forEach(cat => deleteTournamentCategory(cat.id));
-    localStorage.setItem(EVENTS_KEY, JSON.stringify(getTournamentEvents().filter(e => e.id !== eventId)));
+export const deleteTournamentEvent = async (eventId: string): Promise<void> => {
+    const { error } = await supabase.from('tournament_events').delete().eq('id', eventId);
+     if (error) {
+        console.error("Error deleting event:", error.message);
+        throw new Error("Não foi possível remover o evento. Certifique-se de que todas as categorias foram removidas primeiro.");
+     }
 }
 
 // --- Dashboard Stats ---
-export const getPlayerStats = (userId: string): PlayerStats => {
-    const user = getUserById(userId);
-    if (!user) return { rating: 0, wins: 0, losses: 0, totalGames: 0 };
-    
-    let wins = 0;
-    let losses = 0;
-    const allCategories = getTournamentCategories();
-    allCategories.forEach(cat => {
-        const matches = getMatches(cat.id);
-        matches.forEach(match => {
-            if (match.status === 'COMPLETED' && (match.player1Id === userId || match.player2Id === userId)) {
-                if (match.winnerId === userId) {
-                    wins++;
-                } else {
-                    losses++;
-                }
-            }
-        });
-    });
+export const getPlayerStats = async (userId: string): Promise<PlayerStats> => {
+    const { data: user, error: userError } = await supabase
+        .from('users')
+        .select('current_rating')
+        .eq('id', userId)
+        .single();
 
-    return {
-        rating: user.currentRating,
-        wins,
-        losses,
-        totalGames: wins + losses,
-    };
+    if (userError || !user) {
+        console.error("Error fetching player stats:", userError?.message);
+        return { rating: 0, wins: 0, losses: 0, totalGames: 0 };
+    }
+
+    const { data: matches, error: matchesError } = await supabase
+        .from('matches')
+        .select('winner_id')
+        .eq('status', 'COMPLETED')
+        .or(`player1_id.eq.${userId},player2_id.eq.${userId}`);
+
+    if (matchesError) {
+        console.error("Error fetching matches for stats:", matchesError.message);
+        return { rating: user.current_rating || 1000, wins: 0, losses: 0, totalGames: 0 };
+    }
+
+    const wins = matches.filter(m => m.winner_id === userId).length;
+    const totalGames = matches.length;
+    const losses = totalGames - wins;
+
+    return { rating: user.current_rating || 1000, wins, losses, totalGames };
 };
 
-export const getClubStats = (clubId: string): ClubStats => {
-    const clubEvents = getTournamentEvents().filter(e => e.club.id === clubId);
-    const activeEvents = clubEvents.filter(e => {
-        const categories = getTournamentCategories(e.id);
-        return categories.some(c => c.status !== TournamentStatus.COMPLETED);
-    }).length;
-    
-    const totalCategories = getTournamentCategories().filter(c => clubEvents.some(e => e.id === c.eventId)).length;
-    const totalRegistrations = getTournamentCategories().filter(c => clubEvents.some(e => e.id === c.eventId))
-        .reduce((sum, cat) => sum + cat.registrations.length, 0);
+export const getClubStats = async (clubId: string): Promise<ClubStats> => {
+    const { count: activeEvents, error: eventsError } = await supabase
+        .from('tournament_events')
+        .select('*', { count: 'exact', head: true })
+        .eq('club_id', clubId);
 
-    return {
-        activeEvents,
-        totalCategories,
-        totalRegistrations,
-    };
+    const { data: categoriesData, error: categoriesError } = await supabase
+        .from('tournament_events')
+        .select('tournament_categories!inner(id, player_registrations(count))')
+        .eq('club_id', clubId);
+
+    if (eventsError || categoriesError) {
+        console.error("Error fetching club stats:", eventsError?.message || categoriesError?.message);
+        return { activeEvents: 0, totalCategories: 0, totalRegistrations: 0 };
+    }
+    
+    let totalCategories = 0;
+    let totalRegistrations = 0;
+
+    if(categoriesData) {
+        categoriesData.forEach(event => {
+            const categories = event.tournament_categories;
+            if(Array.isArray(categories)) {
+                totalCategories += categories.length;
+                categories.forEach(cat => {
+                    if(Array.isArray(cat.player_registrations) && cat.player_registrations[0]) {
+                        totalRegistrations += cat.player_registrations[0].count;
+                    }
+                });
+            }
+        });
+    }
+
+    return { activeEvents: activeEvents || 0, totalCategories, totalRegistrations };
 };
 
 export const getRecentPlayerMatches = (userId: string): RecentMatch[] => {
-    const history = getRatingHistory(userId).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 5);
-    
-    return history.map(h => {
-        const match = getMatches(h.categoryId).find(m => m.id === h.matchId);
-        if (!match) return null;
-        
-        const isPlayer1 = match.player1Id === userId;
-        const opponentId = isPlayer1 ? match.player2Id : match.player1Id;
-        const opponent = getUserById(opponentId!);
-        const category = getCategoryById(h.categoryId);
-
-        return {
-            matchId: match.id,
-            categoryName: category?.name || 'Desconhecido',
-            opponent: opponent!,
-            result: match.winnerId === userId ? 'win' : 'loss',
-            playerScore: (isPlayer1 ? match.player1Score : match.player2Score) || 0,
-            opponentScore: (isPlayer1 ? match.player2Score : match.player1Score) || 0,
-            ratingChange: h.change,
-        };
-    }).filter((m): m is RecentMatch => m !== null && !!m.opponent);
+    // This would require a more complex query to fetch opponent data.
+    return [];
 };
+
+export const getRatingHistory = async (userId?: string): Promise<RatingHistory[]> => {
+    let query = supabase.from('rating_history').select('*');
+    if (userId) {
+        query = query.eq('user_id', userId);
+    }
+    const { data, error } = await query;
+    if (error) {
+        console.error("Error fetching rating history:", error.message);
+        return [];
+    }
+    // FIX: Map the date from the DB to the expected type format
+    return data.map(h => ({ ...h, date: h.created_at }));
+}

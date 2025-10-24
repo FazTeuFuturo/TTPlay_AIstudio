@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { ArrowLeftIcon } from './Icons';
+import { ArrowLeftIcon, SpinnerIcon } from './Icons';
 
 interface LoginFormProps {
-  onLogin: (email: string, password?: string) => void;
+  onLogin: (email: string, password?: string) => Promise<void>;
   onBack: () => void;
 }
 
@@ -10,15 +10,23 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin, onBack }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) {
       setError('Por favor, preencha todos os campos.');
       return;
     }
     setError('');
-    onLogin(email, password);
+    setLoading(true);
+    try {
+      await onLogin(email, password);
+    } catch (err) {
+      // The parent handleLogin shows the alert, so we just handle state here.
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -43,6 +51,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin, onBack }) => {
               onChange={e => setEmail(e.target.value)}
               className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white focus:ring-blue-500 focus:border-blue-500" 
               required
+              disabled={loading}
             />
           </div>
 
@@ -55,15 +64,17 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin, onBack }) => {
               onChange={e => setPassword(e.target.value)}
               className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white focus:ring-blue-500 focus:border-blue-500" 
               required
+              disabled={loading}
             />
           </div>
 
           <div className="pt-4">
             <button 
               type="submit"
-              className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-6 rounded transition-colors"
+              className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-6 rounded transition-colors flex items-center justify-center disabled:bg-slate-600"
+              disabled={loading}
             >
-              Entrar
+              {loading ? <SpinnerIcon className="w-6 h-6" /> : 'Entrar'}
             </button>
           </div>
         </form>

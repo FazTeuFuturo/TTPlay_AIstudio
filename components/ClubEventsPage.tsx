@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Club, TournamentEvent, User, SubscriptionPlan, TournamentFormat } from '../types';
+import { Club, TournamentEvent, User, SubscriptionPlan } from '../types';
 import { getClubByAdminId, getTournamentEvents, deleteTournamentEvent } from '../data-service';
 import CreateEventForm from './CreateTournamentForm';
 import { ManageEvent } from './ManageEvent';
@@ -10,21 +10,33 @@ interface ClubEventsPageProps {
     onNavigate: (view: 'dashboard' | 'checkout' | 'subscription') => void;
 }
 
-const EventCardAdmin: React.FC<{ event: TournamentEvent, onSelect: () => void }> = ({ event, onSelect }) => (
-    <div onClick={onSelect} className="bg-slate-800/50 border border-slate-700 rounded-lg p-5 hover:bg-slate-800 hover:border-blue-500 transition-all duration-300 cursor-pointer group/card">
-        <h3 className="text-xl font-bold text-white group-hover/card:text-blue-400 transition-colors">{event.name}</h3>
-        <div className="flex flex-col sm:flex-row justify-between text-slate-300 gap-4 mt-2">
-            <div className="flex items-center gap-2">
-                <CalendarIcon className="w-5 h-5 text-slate-500"/>
-                <span>{new Date(event.startDate).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}</span>
-            </div>
-            <div className="flex items-center gap-2">
-                <MapPinIcon className="w-5 h-5 text-slate-500"/>
-                <span>{event.location}</span>
+const EventCardAdmin: React.FC<{ event: TournamentEvent, onSelect: () => void, onDelete: () => void }> = ({ event, onSelect, onDelete }) => (
+    <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-5 hover:bg-slate-800 hover:border-blue-500 transition-all duration-300 group/card flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div onClick={onSelect} className="flex-grow cursor-pointer w-full">
+            <h3 className="text-xl font-bold text-white group-hover/card:text-blue-400 transition-colors break-words">{event.name}</h3>
+            <div className="flex flex-col sm:flex-row sm:items-center text-slate-300 gap-x-6 gap-y-2 mt-2">
+                <div className="flex items-center gap-2">
+                    <CalendarIcon className="w-5 h-5 text-slate-500"/>
+                    <span>{new Date(event.startDate).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <MapPinIcon className="w-5 h-5 text-slate-500"/>
+                    <span>{event.location}</span>
+                </div>
             </div>
         </div>
+        <button
+            onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+            }}
+            className="bg-red-600/50 text-red-200 hover:bg-red-600 hover:text-white px-3 py-1 text-xs font-bold rounded transition-all duration-300 sm:opacity-0 sm:group-hover/card:opacity-100 flex-shrink-0 self-start sm:self-center"
+        >
+            Remover
+        </button>
     </div>
 );
+
 
 const ClubEventsPage: React.FC<ClubEventsPageProps> = ({ adminUser, onNavigate }) => {
   const [club, setClub] = useState<Club | null>(null);
@@ -32,11 +44,11 @@ const ClubEventsPage: React.FC<ClubEventsPageProps> = ({ adminUser, onNavigate }
   const [selectedEvent, setSelectedEvent] = useState<TournamentEvent | null>(null);
   const [view, setView] = useState<'list' | 'create_event'>('list');
 
-  const fetchData = () => {
-    const adminClub = getClubByAdminId(adminUser.id);
+  const fetchData = async () => {
+    const adminClub = await getClubByAdminId(adminUser.id);
     if (adminClub) {
       setClub(adminClub);
-      const allEvents = getTournamentEvents();
+      const allEvents = await getTournamentEvents();
       setClubEvents(allEvents.filter(e => e.club.id === adminClub.id));
     }
   }
@@ -51,10 +63,11 @@ const ClubEventsPage: React.FC<ClubEventsPageProps> = ({ adminUser, onNavigate }
     setView('list');
   }
 
-  const handleDeleteEvent = (eventId: string) => {
-    // REMOVED window.confirm check
-    deleteTournamentEvent(eventId);
-    fetchData();
+  const handleDeleteEvent = async (eventId: string) => {
+    if (window.confirm('Tem certeza que deseja remover este evento e todas as suas categorias? Esta ação não pode ser desfeita.')) {
+        await deleteTournamentEvent(eventId);
+        fetchData();
+    }
   }
 
   if (!club) {
@@ -109,21 +122,12 @@ const ClubEventsPage: React.FC<ClubEventsPageProps> = ({ adminUser, onNavigate }
       <div className="space-y-6">
         {clubEvents.length > 0 ? (
             clubEvents.map(event => (
-                <div key={event.id} className="relative group">
-                    <EventCardAdmin 
-                        event={event}
-                        onSelect={() => setSelectedEvent(event)}
-                    />
-                    <button
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteEvent(event.id);
-                        }}
-                        className="absolute top-4 right-4 bg-red-600/50 text-red-200 hover:bg-red-600 hover:text-white px-2 py-1 text-xs font-bold rounded transition-all opacity-0 group-hover:opacity-100 duration-300"
-                    >
-                        Remover
-                    </button>
-                </div>
+                <EventCardAdmin 
+                    key={event.id}
+                    event={event}
+                    onSelect={() => setSelectedEvent(event)}
+                    onDelete={() => handleDeleteEvent(event.id)}
+                />
             ))
         ) : (
             <div className="text-center py-16 bg-slate-800/30 rounded-lg">

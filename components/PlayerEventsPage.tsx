@@ -118,9 +118,9 @@ const PlayerEventsPage: React.FC<PlayerEventsPageProps> = ({ playerUser, onAddTo
   const [currentUser, setCurrentUser] = useState<User>(playerUser);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
 
-  const fetchData = () => {
-    const allEvents = getTournamentEvents();
-    const allCategories = getTournamentCategories();
+  const fetchData = async () => {
+    const allEvents = await getTournamentEvents();
+    const allCategories = await getTournamentCategories();
 
     const activeEvents = allEvents.filter(event => 
         allCategories.some(cat => cat.eventId === event.id && cat.status !== TournamentStatus.COMPLETED)
@@ -128,7 +128,8 @@ const PlayerEventsPage: React.FC<PlayerEventsPageProps> = ({ playerUser, onAddTo
 
     setEvents(activeEvents);
     setCategories(allCategories);
-    setCurrentUser(getUserById(playerUser.id) || playerUser);
+    const user = await getUserById(playerUser.id);
+    setCurrentUser(user || playerUser);
     setCartItems(getCart());
   }
 
@@ -136,12 +137,11 @@ const PlayerEventsPage: React.FC<PlayerEventsPageProps> = ({ playerUser, onAddTo
     fetchData();
   }, [playerUser]);
 
-  const handleCancelRegistration = (categoryId: string) => {
-    // REMOVED window.confirm check
-    const success = cancelPlayerRegistration(categoryId, playerUser.id);
+  const handleCancelRegistration = async (categoryId: string) => {
+    const success = await cancelPlayerRegistration(categoryId, playerUser.id);
     if (success) {
         alert('Inscrição cancelada com sucesso.');
-        fetchData();
+        await fetchData();
     } else {
         alert('Não foi possível cancelar a inscrição. O prazo pode ter expirado.');
     }

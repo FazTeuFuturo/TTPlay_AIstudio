@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { User, UserSession, Role, Club } from './types';
-import { initializeDatabase, login, logout, getCurrentUserSession, getUserById, registerPlayer, registerClub, getCart, addToCart, checkout, getClubById, transferClubAdminship } from './data-service';
-import { PingPongPaddleIcon, ShoppingCartIcon } from './components/Icons';
+import { initializeDatabase, login, logout, getCurrentUserSession, getUserById, registerPlayer, registerClub, getCart, addToCart, checkout, getClubById, transferClubAdminship, updateUserDetails } from './data-service';
+import { PingPongPaddleIcon, ShoppingCartIcon, SpinnerIcon } from './components/Icons';
 import AuthPage from './components/AuthPage';
 import CheckoutPage from './components/CheckoutPage';
 import SubscriptionPage from './components/SubscriptionPage';
@@ -86,20 +86,28 @@ const App: React.FC = () => {
   const [modalView, setModalView] = useState<ModalView>('none');
   const [cartCount, setCartCount] = useState(0);
 
-  const refreshData = () => {
-    const currentSession = getCurrentUserSession();
+  const refreshData = async () => {
+    const currentSession = await getCurrentUserSession();
     if (currentSession) {
       setSession(currentSession);
-      const user = getUserById(currentSession.userId);
-      setCurrentUser(user || null);
-      if(user && user.role === Role.PLAYER) {
-        setCartCount(getCart().length);
-      }
-      if (user && user.role === Role.CLUB_ADMIN && user.clubId) {
-        setManagedClub(getClubById(user.clubId) || null);
+      const user = await getUserById(currentSession.userId);
+      
+      if (user) {
+        setCurrentUser(user);
+
+        if(user.role === Role.PLAYER) {
+            setCartCount(getCart().length);
+        }
+        if (user.role === Role.CLUB_ADMIN && user.clubId) {
+            const club = await getClubById(user.clubId);
+            setManagedClub(club || null);
+        } else {
+            setManagedClub(null);
+        }
       } else {
-        setManagedClub(null);
+         setCurrentUser(null);
       }
+
     } else {
       setSession(null);
       setCurrentUser(null);
@@ -109,24 +117,28 @@ const App: React.FC = () => {
   }
 
   useEffect(() => {
-    initializeDatabase();
-    refreshData();
-    setIsLoading(false);
+    const setup = async () => {
+      setIsLoading(true);
+      await initializeDatabase();
+      await refreshData();
+      setIsLoading(false);
+    };
+    setup();
   }, []);
 
-  const handleLogin = (email: string, password?: string) => {
-    const user = login(email, password || '');
+  const handleLogin = async (email: string, password?: string) => {
+    const user = await login(email, password || '');
     if (user) {
-        refreshData();
+        await refreshData();
         setMainView('dashboard'); 
     } else {
         alert("Email ou senha inválidos.");
     }
   };
   
-  const handleRegisterPlayer = (data: Partial<User>): boolean => {
+  const handleRegisterPlayer = async (data: Partial<User>): Promise<boolean> => {
     try {
-        const newUser = registerPlayer(data);
+        const newUser = await registerPlayer(data);
         alert(`Bem-vindo, ${newUser.name}! Seu cadastro foi realizado com sucesso. Faça o login para continuar.`);
         return true;
     } catch (error) {
@@ -136,9 +148,9 @@ const App: React.FC = () => {
     }
   }
 
-  const handleRegisterClub = (clubData: Partial<Club>, adminData: Partial<User>): boolean => {
+  const handleRegisterClub = async (clubData: Partial<Club>, adminData: Partial<User>): Promise<boolean> => {
      try {
-        const { club, admin } = registerClub(clubData, adminData);
+        const { club, admin } = await registerClub(clubData, adminData);
         alert(`Clube ${club.name} cadastrado com sucesso! Faça o login como ${admin.name} para continuar.`);
         return true;
     } catch (error) {
@@ -148,9 +160,9 @@ const App: React.FC = () => {
     }
   }
 
-  const handleLogout = () => {
-    logout();
-    refreshData();
+  const handleLogout = async () => {
+    await logout();
+    await refreshData();
     setMainView('dashboard');
     setModalView('none');
   };
@@ -166,12 +178,12 @@ const App: React.FC = () => {
     alert('Categoria adicionada ao carrinho!');
   }
 
-  const handleCheckout = () => {
+  const handleCheckout = async () => {
     if (currentUser) {
-        const success = checkout(currentUser.id);
+        const success = await checkout(currentUser.id);
         if (success) {
             alert('Pagamento simulado com sucesso! Inscrições confirmadas.');
-            refreshData();
+            await refreshData(); // Refresh to update registrations
             setModalView('none');
         } else {
             alert('Ocorreu um erro ao processar suas inscrições.');
@@ -209,9 +221,10 @@ const App: React.FC = () => {
             return null;
         case 'profile':
             if (currentUser.role === Role.PLAYER) {
-                return <PlayerProfileForm user={currentUser} mode="edit" onFormClose={() => {
+                return <PlayerProfileForm user={currentUser} mode="edit" onFormSubmit={async (data) => {
+                    await updateUserDetails(currentUser.id, data);
+                    await refreshData();
                     setMainView('dashboard');
-                    refreshData();
                 }} />;
             }
             if (currentUser.role === Role.CLUB_ADMIN && managedClub) {
@@ -235,8 +248,8 @@ const App: React.FC = () => {
 
   if (isLoading) {
     return (
-        <div className="min-h-screen flex items-center justify-center">
-            <h1 className="text-2xl font-bold">Carregando...</h1>
+        <div className="min-h-screen flex items-center justify-center bg-slate-900">
+            <SpinnerIcon className="w-12 h-12 text-blue-500"/>
         </div>
     )
   }

@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { TournamentEvent, TournamentCategory, User, TournamentStatus, TournamentFormat } from '../types';
 import { getTournamentCategories, startCategory, closeRegistration, deleteTournamentCategory, reopenRegistration } from '../data-service';
@@ -6,6 +5,7 @@ import { ArrowLeftIcon, UsersIcon, SpinnerIcon } from './Icons';
 import AddCategoryFlow from './AddCategoryFlow';
 import { CategoryDetails } from './TournamentDetails';
 import CreateEventForm from './CreateTournamentForm';
+import CategoryForm from './CategoryForm';
 
 interface ManageEventProps {
     event: TournamentEvent;
@@ -32,12 +32,12 @@ const formatLabels: Record<TournamentFormat, string> = {
 export const ManageEvent: React.FC<ManageEventProps> = ({ event, onBack, onDataUpdate }) => {
     const [currentEvent, setCurrentEvent] = useState<TournamentEvent>(event);
     const [categories, setCategories] = useState<TournamentCategory[]>([]);
-    const [view, setView] = useState<'list' | 'add_category' | 'view_category' | 'edit_event'>('list');
+    const [view, setView] = useState<'list' | 'add_category' | 'view_category' | 'edit_event' | 'edit_category'>('list');
     const [selectedCategory, setSelectedCategory] = useState<TournamentCategory | null>(null);
     const [loadingCategoryId, setLoadingCategoryId] = useState<string | null>(null);
 
-    const fetchData = () => {
-        setCategories(getTournamentCategories(currentEvent.id));
+    const fetchData = async () => {
+        setCategories(await getTournamentCategories(currentEvent.id));
     };
 
     useEffect(() => {
@@ -47,9 +47,9 @@ export const ManageEvent: React.FC<ManageEventProps> = ({ event, onBack, onDataU
     const handleCloseRegistration = async (categoryId: string) => {
         setLoadingCategoryId(categoryId);
         try {
-            closeRegistration(categoryId);
+            await closeRegistration(categoryId);
             alert("Inscrições encerradas com sucesso!");
-            fetchData();
+            await fetchData();
             onDataUpdate();
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -62,9 +62,9 @@ export const ManageEvent: React.FC<ManageEventProps> = ({ event, onBack, onDataU
     const handleReopenRegistration = async (categoryId: string) => {
         setLoadingCategoryId(categoryId);
         try {
-            reopenRegistration(categoryId);
+            await reopenRegistration(categoryId);
             alert("Inscrições reabertas com sucesso!");
-            fetchData();
+            await fetchData();
             onDataUpdate();
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -77,9 +77,9 @@ export const ManageEvent: React.FC<ManageEventProps> = ({ event, onBack, onDataU
     const handleGenerateBrackets = async (categoryId: string) => {
         setLoadingCategoryId(categoryId);
         try {
-            startCategory(categoryId);
+            await startCategory(categoryId);
             alert("Grupos e chave gerados com sucesso! A competição começou.");
-            fetchData();
+            await fetchData();
             onDataUpdate();
         } catch (error) {
             console.error(error); // Log the full error for better debugging
@@ -90,10 +90,18 @@ export const ManageEvent: React.FC<ManageEventProps> = ({ event, onBack, onDataU
         }
     };
 
-    const handleDeleteCategory = (categoryId: string) => {
-        deleteTournamentCategory(categoryId);
-        fetchData();
-        onDataUpdate();
+    const handleDeleteCategory = async (categoryId: string) => {
+        if (window.confirm('Tem certeza que deseja remover esta categoria? Esta ação não pode ser desfeita.')) {
+            try {
+                await deleteTournamentCategory(categoryId);
+                alert('Categoria removida com sucesso.');
+                await fetchData();
+                onDataUpdate();
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                alert(`Erro ao remover categoria: ${errorMessage}`);
+            }
+        }
     }
     
     if (view === 'view_category' && selectedCategory) {
@@ -113,6 +121,19 @@ export const ManageEvent: React.FC<ManageEventProps> = ({ event, onBack, onDataU
             eventId={currentEvent.id}
             onFormClose={() => {
                 setView('list');
+                fetchData();
+                onDataUpdate();
+            }}
+        />
+    }
+
+    if (view === 'edit_category' && selectedCategory) {
+        return <CategoryForm
+            eventId={currentEvent.id}
+            categoryToEdit={selectedCategory}
+            onFormClose={() => {
+                setView('list');
+                setSelectedCategory(null);
                 fetchData();
                 onDataUpdate();
             }}
@@ -149,7 +170,7 @@ export const ManageEvent: React.FC<ManageEventProps> = ({ event, onBack, onDataU
         }
         if (category.status === TournamentStatus.REGISTRATION_CLOSED) {
              return (
-                <div className="flex gap-2">
+                <div className="flex flex-col sm:flex-row gap-2">
                     <button
                         onClick={() => handleReopenRegistration(category.id)}
                         className="bg-gray-500 hover:bg-gray-400 text-white font-bold py-1 px-3 rounded text-sm transition-colors disabled:bg-slate-600 disabled:cursor-not-allowed"
@@ -176,12 +197,12 @@ export const ManageEvent: React.FC<ManageEventProps> = ({ event, onBack, onDataU
                 <ArrowLeftIcon className="w-5 h-5"/>
                 Voltar para Eventos
             </button>
-            <div className="flex justify-between items-start mb-8">
-                <div>
-                    <h2 className="text-3xl font-extrabold tracking-tight text-white">{currentEvent.name}</h2>
+            <div className="flex flex-col md:flex-row justify-between md:items-start gap-4 mb-8">
+                <div className="flex-grow">
+                    <h2 className="text-3xl font-extrabold tracking-tight text-white break-words">{currentEvent.name}</h2>
                     <p className="text-lg text-slate-400">{currentEvent.location}</p>
                 </div>
-                <div className="flex gap-4">
+                <div className="flex flex-col sm:flex-row gap-4 flex-shrink-0 w-full sm:w-auto">
                     <button
                         onClick={() => setView('edit_event')}
                         className="bg-slate-700 hover:bg-slate-600 text-white font-bold py-2 px-4 rounded transition-colors"
@@ -201,41 +222,53 @@ export const ManageEvent: React.FC<ManageEventProps> = ({ event, onBack, onDataU
                 {categories.length > 0 ? categories.map(cat => {
                     const status = statusStyles[cat.status];
                      return (
-                        <div key={cat.id} className="bg-slate-800/50 border border-slate-700 rounded-lg p-4 flex flex-wrap justify-between items-center gap-4">
+                        <div key={cat.id} className="bg-slate-800/50 border border-slate-700 rounded-lg p-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                             <div 
-                                className="cursor-pointer flex-grow"
+                                className="cursor-pointer flex-grow w-full"
                                 onClick={() => {
                                     setSelectedCategory(cat)
                                     setView('view_category');
                                 }}
                             >
-                                <p className="text-lg font-bold text-white hover:text-blue-400">{cat.name}</p>
-                                <div className="flex items-center gap-4 text-sm text-slate-400">
+                                <p className="text-lg font-bold text-white hover:text-blue-400 break-words">{cat.name}</p>
+                                <div className="flex items-center flex-wrap gap-x-4 gap-y-1 text-sm text-slate-400 mt-1">
                                     <span>{formatLabels[cat.format]}</span>
                                     {cat.startTime && (
                                         <>
-                                            <span className="text-slate-600">|</span>
+                                            <span className="text-slate-600 hidden sm:inline">|</span>
                                             <span>Início: {cat.startTime}</span>
                                         </>
                                     )}
                                 </div>
                             </div>
-                            <div className="flex items-center gap-4">
-                                <div className={`px-3 py-1 rounded-full text-xs font-semibold ${status.bg} ${status.text}`}>
-                                    {status.label}
+                            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 w-full sm:w-auto">
+                                <div className="flex items-center justify-between gap-4">
+                                    <div className={`px-3 py-1 rounded-full text-xs font-semibold ${status.bg} ${status.text}`}>
+                                        {status.label}
+                                    </div>
+                                    <div className="flex items-center gap-2 text-sm text-slate-300">
+                                        <UsersIcon className="w-4 h-4" />
+                                        <span>{cat.registrations.length} / {cat.maxParticipants}</span>
+                                    </div>
                                 </div>
-                                <div className="flex items-center gap-2 text-sm text-slate-300">
-                                    <UsersIcon className="w-4 h-4" />
-                                    <span>{cat.registrations.length} / {cat.maxParticipants}</span>
+                                <div className="h-px sm:h-6 sm:w-px bg-slate-700"></div>
+                                <div className="flex items-center gap-2 justify-end">
+                                    <ActionButton category={cat} />
+                                    <button 
+                                        onClick={() => {setSelectedCategory(cat); setView('edit_category');}}
+                                        className="bg-gray-600/50 text-gray-200 hover:bg-gray-600/80 hover:text-white text-xs font-bold py-1 px-2 rounded transition-colors"
+                                        title="Editar categoria"
+                                    >
+                                        Editar
+                                    </button>
+                                    <button 
+                                        onClick={() => handleDeleteCategory(cat.id)}
+                                        className="bg-red-600/20 text-red-400 hover:bg-red-600/40 hover:text-red-300 text-xs font-bold py-1 px-2 rounded transition-colors"
+                                        title="Remover categoria"
+                                    >
+                                        Remover
+                                    </button>
                                 </div>
-                                <ActionButton category={cat} />
-                                <button 
-                                    onClick={() => handleDeleteCategory(cat.id)}
-                                    className="bg-red-600/20 text-red-400 hover:bg-red-600/40 hover:text-red-300 text-xs font-bold py-1 px-2 rounded transition-colors"
-                                    title="Remover categoria"
-                                >
-                                    Remover
-                                </button>
                             </div>
                         </div>
                     )}

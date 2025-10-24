@@ -5,9 +5,9 @@ import ClubProfileForm from './ClubProfileForm';
 import LoginForm from './LoginForm';
 
 interface AuthPageProps {
-  onLogin: (email: string, password?: string) => void;
-  onRegisterPlayer: (data: Partial<User>) => boolean;
-  onRegisterClub: (clubData: Partial<Club>, adminData: Partial<User>) => boolean;
+  onLogin: (email: string, password?: string) => Promise<void>;
+  onRegisterPlayer: (data: Partial<User>) => Promise<boolean>;
+  onRegisterClub: (clubData: Partial<Club>, adminData: Partial<User>) => Promise<boolean>;
 }
 
 type AuthView = 'choice' | 'login' | 'register_player' | 'register_club';
@@ -15,18 +15,16 @@ type AuthView = 'choice' | 'login' | 'register_player' | 'register_club';
 const AuthPage: React.FC<AuthPageProps> = ({ onLogin, onRegisterPlayer, onRegisterClub }) => {
   const [view, setView] = useState<AuthView>('choice');
 
-  // FIX: This function must return a boolean to match the 'onRegister' prop type of PlayerProfileForm.
-  const handlePlayerRegister = (data: Partial<User>): boolean => {
-    const success = onRegisterPlayer(data);
+  const handlePlayerRegister = async (data: Partial<User>): Promise<boolean> => {
+    const success = await onRegisterPlayer(data);
     if(success) {
         setView('login');
     }
     return success;
   }
 
-  // FIX: This function must return a boolean to match the 'onRegister' prop type of ClubProfileForm.
-  const handleClubRegister = (clubData: Partial<Club>, adminData: Partial<User>): boolean => {
-    const success = onRegisterClub(clubData, adminData);
+  const handleClubRegister = async (clubData: Partial<Club>, adminData: Partial<User>): Promise<boolean> => {
+    const success = await onRegisterClub(clubData, adminData);
     if(success) {
         setView('login');
     }
@@ -38,7 +36,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin, onRegisterPlayer, onRegist
       case 'login':
         return <LoginForm onLogin={onLogin} onBack={() => setView('choice')} />;
       case 'register_player':
-        return <PlayerProfileForm mode="register" onFormClose={() => setView('choice')} onRegister={handlePlayerRegister} />;
+        return <PlayerProfileForm mode="register" onFormClose={() => setView('choice')} onFormSubmit={handlePlayerRegister} />;
       case 'register_club':
         return <ClubProfileForm mode="register" onFormClose={() => setView('choice')} onRegister={handleClubRegister} />;
       case 'choice':
