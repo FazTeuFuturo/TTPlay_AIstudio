@@ -154,14 +154,7 @@ const App: React.FC = () => {
                             setManagedClub(null);
                         }
                         console.log("LOG: Estado do usuário e clube configurado.");
-                        // --- INÍCIO DA NOVA LÓGICA DE LIMPEZA DE URL ---
-                        if (window.location.pathname === '/reset-password') {
-                            console.log("LOG: URL atual é /reset-password. Limpando para /...");
-                            // Usamos replaceState para mudar a URL sem recarregar a página
-                            window.history.replaceState(null, '', '/'); 
-                            console.log("LOG: URL limpa.");
-                        }
-                        // --- FIM DA NOVA LÓGICA ---
+                        
                     } else {
                         console.error("LOG: Perfil do usuário NÃO encontrado após login (getUserById retornou null). Forçando logout.");
                         throw new Error("Perfil do usuário não encontrado após login.");
@@ -350,9 +343,18 @@ const App: React.FC = () => {
           <main className="flex-grow w-full flex items-center justify-center">
             <ResetPasswordPage 
                 onSuccess={() => {
-                    console.log("LOG: Senha redefinida com sucesso. Deslogando...");
-                    setIsRecovering(false); 
-                    handleLogout(); 
+                    console.log("LOG: Senha redefinida com sucesso. Limpando URL e deslogando...");
+                    
+                    // --- LIMPA A URL PRIMEIRO ---
+                    if (window.location.pathname === '/reset-password') {
+                        console.log("LOG: Limpando URL /reset-password para /...");
+                        window.history.replaceState(null, '', '/'); 
+                        console.log("LOG: URL limpa.");
+                    }
+                    // --- FIM DA LIMPEZA DE URL ---
+
+                    setIsRecovering(false); // Sai do modo de recuperação
+                    handleLogout(); // Limpa a sessão e dispara 'SIGNED_OUT'
                 }}
             />
           </main>
