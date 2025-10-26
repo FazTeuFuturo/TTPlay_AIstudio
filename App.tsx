@@ -123,73 +123,78 @@ const App: React.FC = () => {
                 setSession(session);
                 setCurrentUser(null);
                 setManagedClub(null);
-                // isLoading será tratado no finally
+                setIsLoading(false); // <-- Define isLoading false AQUI para recuperação
             } else if (event === 'SIGNED_IN') {
-                console.log("LOG: Usuário LOGADO (SIGNED_IN). Processando..."); // <-- Log Alterado
+                console.log("LOG: Usuário LOGADO (SIGNED_IN). Processando...");
                 setIsRecovering(false);
                 setSession(session);
+                
+                // <-- DEFINE isLoading false LOGO AQUI, ANTES DO ASYNC
+                setIsLoading(false); 
+                console.log("LOG: isLoading DEFINIDO para false (antes de buscar perfil).");
+
                 if (session) {
-                    console.log(`LOG: Tentando buscar perfil para user ID: ${session.user.id}`); // <-- NOVO Log
+                    console.log(`LOG: Tentando buscar perfil para user ID: ${session.user.id}`);
                     const user = await getUserById(session.user.id); //
-                    console.log("LOG: getUserById concluído."); // <-- NOVO Log
+                    console.log("LOG: getUserById concluído.");
 
                     if (user) {
-                        console.log(`LOG: Perfil encontrado: ${user.name}. Configurando estado...`); // <-- NOVO Log
-                        setCurrentUser(user);
+                        console.log(`LOG: Perfil encontrado: ${user.name}. Configurando estado...`);
+                        setCurrentUser(user); // Define o usuário AQUI
+                        // A busca do clube e carrinho pode acontecer depois que o usuário já está definido
                         if (user.role === Role.PLAYER) {
                             setCartCount(getCart().length);
                         }
                         if (user.role === Role.CLUB_ADMIN && user.clubId) {
-                            console.log(`LOG: Buscando clube ID: ${user.clubId}`); // <-- NOVO Log
-                            const club = await getClubById(user.clubId);
+                            console.log(`LOG: Buscando clube ID: ${user.clubId}`);
+                            const club = await getClubById(user.clubId); //
                             setManagedClub(club || null);
-                            console.log(`LOG: Clube ${club ? club.name : 'NÃO'} encontrado.`); // <-- NOVO Log
+                            console.log(`LOG: Clube ${club ? club.name : 'NÃO'} encontrado.`);
                         } else {
                             setManagedClub(null);
                         }
-                        console.log("LOG: Estado do usuário e clube configurado."); // <-- NOVO Log
+                        console.log("LOG: Estado do usuário e clube configurado.");
                     } else {
-                        console.error("LOG: Perfil do usuário NÃO encontrado após login (getUserById retornou null). Forçando logout."); // <-- Log Alterado
+                        console.error("LOG: Perfil do usuário NÃO encontrado após login (getUserById retornou null). Forçando logout.");
                         throw new Error("Perfil do usuário não encontrado após login.");
                     }
                 } else {
-                     console.error("LOG: Evento SIGNED_IN mas a sessão era nula. Forçando logout."); // <-- Log Alterado
+                     console.error("LOG: Evento SIGNED_IN mas a sessão era nula. Forçando logout.");
                      throw new Error("Sessão 'SIGNED_IN' não encontrada.");
                 }
             } else if (event === 'SIGNED_OUT') {
-                console.log("LOG: Usuário DESLOGADO (SIGNED_OUT). Limpando estado..."); // <-- Log Alterado
+                console.log("LOG: Usuário DESLOGADO (SIGNED_OUT). Limpando estado...");
                 setIsRecovering(false);
                 setSession(null);
                 setCurrentUser(null);
                 setManagedClub(null);
                 setCartCount(0);
-                // isLoading será tratado no finally
+                setIsLoading(false); // <-- Define isLoading false AQUI para logout
             } else if (event === 'INITIAL_SESSION') {
-                if (!session) {
+                 if (!session) {
                     console.log("LOG: Sessão inicial nula.");
-                     //isLoading será tratado no finally, mesmo aqui
+                     setIsLoading(false); // <-- Define isLoading false AQUI para sessão inicial nula
                 } else {
                     console.log("LOG: Sessão inicial encontrada. Aguardando evento SIGNED_IN...");
-                    // Não fazemos nada aqui, esperamos o SIGNED_IN
+                    // Não definimos isLoading aqui, esperamos o SIGNED_IN tratar
                 }
             }
         } catch (error: any) {
-            console.error("LOG: Erro dentro do listener onAuthStateChange:", error.message); // <-- Log Alterado
-            // Se algo falhar (como o 'Failed to fetch' ou user não encontrado), força o logout
+            console.error("LOG: Erro dentro do listener onAuthStateChange:", error.message);
             setIsRecovering(false);
             setSession(null);
             setCurrentUser(null);
-            setManagedClub(null); // <-- NOVO: Limpar clube também no erro
-            setCartCount(0); // <-- NOVO: Limpar carrinho também no erro
-            // Tentamos deslogar silenciosamente
+            setManagedClub(null);
+            setCartCount(0);
             await supabase.auth.signOut().catch(signOutError => {
                 console.error("LOG: Erro adicional ao tentar deslogar no catch:", signOutError);
             });
-            //isLoading será tratado no finally
-        } finally {
-            console.log(`LOG: Listener finalizado para evento ${event}. Definindo isLoading = false.`); // <-- Log Alterado
-            setIsLoading(false);
-        }
+            setIsLoading(false); // <-- Define isLoading false AQUI em caso de erro
+        } 
+        // finally { // <-- REMOVIDO o finally
+        //     setIsLoading(false); 
+        //     console.log(`LOG: Listener finalizado para evento ${event}. isLoading DEFINIDO para false.`); 
+        // }
     });
 
     // 3. Limpa o listener ao desmontar
