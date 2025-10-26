@@ -116,50 +116,79 @@ const App: React.FC = () => {
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
         console.log(`LOG: onAuthStateChange EVENTO: ${event}`);
 
-        if (event === 'PASSWORD_RECOVERY') {
-            console.log("LOG: Modo de Recuperação de Senha ATIVADO.");
-            setIsRecovering(true); 
-            // <-- ALTERADO: Correção para o erro TS2352 (removido cast)
-            setSession(session); 
-            setCurrentUser(null); 
-            setManagedClub(null);
-            setIsLoading(false);
-        } else if (event === 'SIGNED_IN') {
-            console.log("LOG: Usuário LOGADO (SIGNED_IN).");
-            setIsRecovering(false); 
-            // <-- ALTERADO: Correção para o erro TS2352 (removido cast)
-            setSession(session);
-            if (session) {
-                const user = await getUserById(session.user.id);
-                if (user) {
-                    setCurrentUser(user);
-                    if (user.role === Role.PLAYER) {
-                        setCartCount(getCart().length);
-                    }
-                    if (user.role === Role.CLUB_ADMIN && user.clubId) {
-                        const club = await getClubById(user.clubId);
-                        setManagedClub(club || null);
+        try {
+            if (event === 'PASSWORD_RECOVERY') {
+                console.log("LOG: Modo de Recuperação de Senha ATIVADO.");
+                setIsRecovering(true);
+                setSession(session);
+                setCurrentUser(null);
+                setManagedClub(null);
+                // isLoading será tratado no finally
+            } else if (event === 'SIGNED_IN') {
+                console.log("LOG: Usuário LOGADO (SIGNED_IN). Processando..."); // <-- Log Alterado
+                setIsRecovering(false);
+                setSession(session);
+                if (session) {
+                    console.log(`LOG: Tentando buscar perfil para user ID: ${session.user.id}`); // <-- NOVO Log
+                    const user = await getUserById(session.user.id); //
+                    console.log("LOG: getUserById concluído."); // <-- NOVO Log
+
+                    if (user) {
+                        console.log(`LOG: Perfil encontrado: ${user.name}. Configurando estado...`); // <-- NOVO Log
+                        setCurrentUser(user);
+                        if (user.role === Role.PLAYER) {
+                            setCartCount(getCart().length);
+                        }
+                        if (user.role === Role.CLUB_ADMIN && user.clubId) {
+                            console.log(`LOG: Buscando clube ID: ${user.clubId}`); // <-- NOVO Log
+                            const club = await getClubById(user.clubId);
+                            setManagedClub(club || null);
+                            console.log(`LOG: Clube ${club ? club.name : 'NÃO'} encontrado.`); // <-- NOVO Log
+                        } else {
+                            setManagedClub(null);
+                        }
+                        console.log("LOG: Estado do usuário e clube configurado."); // <-- NOVO Log
                     } else {
-                        setManagedClub(null);
+                        console.error("LOG: Perfil do usuário NÃO encontrado após login (getUserById retornou null). Forçando logout."); // <-- Log Alterado
+                        throw new Error("Perfil do usuário não encontrado após login.");
                     }
                 } else {
-                    setCurrentUser(null);
+                     console.error("LOG: Evento SIGNED_IN mas a sessão era nula. Forçando logout."); // <-- Log Alterado
+                     throw new Error("Sessão 'SIGNED_IN' não encontrada.");
+                }
+            } else if (event === 'SIGNED_OUT') {
+                console.log("LOG: Usuário DESLOGADO (SIGNED_OUT). Limpando estado..."); // <-- Log Alterado
+                setIsRecovering(false);
+                setSession(null);
+                setCurrentUser(null);
+                setManagedClub(null);
+                setCartCount(0);
+                // isLoading será tratado no finally
+            } else if (event === 'INITIAL_SESSION') {
+                if (!session) {
+                    console.log("LOG: Sessão inicial nula.");
+                     //isLoading será tratado no finally, mesmo aqui
+                } else {
+                    console.log("LOG: Sessão inicial encontrada. Aguardando evento SIGNED_IN...");
+                    // Não fazemos nada aqui, esperamos o SIGNED_IN
                 }
             }
-            setIsLoading(false);
-        } else if (event === 'SIGNED_OUT') {
-            console.log("LOG: Usuário DESLOGADO (SIGNED_OUT).");
-            setIsRecovering(false); 
+        } catch (error: any) {
+            console.error("LOG: Erro dentro do listener onAuthStateChange:", error.message); // <-- Log Alterado
+            // Se algo falhar (como o 'Failed to fetch' ou user não encontrado), força o logout
+            setIsRecovering(false);
             setSession(null);
             setCurrentUser(null);
-            setManagedClub(null);
-            setCartCount(0);
+            setManagedClub(null); // <-- NOVO: Limpar clube também no erro
+            setCartCount(0); // <-- NOVO: Limpar carrinho também no erro
+            // Tentamos deslogar silenciosamente
+            await supabase.auth.signOut().catch(signOutError => {
+                console.error("LOG: Erro adicional ao tentar deslogar no catch:", signOutError);
+            });
+            //isLoading será tratado no finally
+        } finally {
+            console.log(`LOG: Listener finalizado para evento ${event}. Definindo isLoading = false.`); // <-- Log Alterado
             setIsLoading(false);
-        } else if (event === 'INITIAL_SESSION') {
-            if (!session) {
-                console.log("LOG: Sessão inicial nula.");
-                setIsLoading(false);
-            }
         }
     });
 
