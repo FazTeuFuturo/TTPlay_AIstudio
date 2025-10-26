@@ -154,6 +154,14 @@ const App: React.FC = () => {
                             setManagedClub(null);
                         }
                         console.log("LOG: Estado do usuário e clube configurado.");
+                        // --- INÍCIO DA NOVA LÓGICA DE LIMPEZA DE URL ---
+                        if (window.location.pathname === '/reset-password') {
+                            console.log("LOG: URL atual é /reset-password. Limpando para /...");
+                            // Usamos replaceState para mudar a URL sem recarregar a página
+                            window.history.replaceState(null, '', '/'); 
+                            console.log("LOG: URL limpa.");
+                        }
+                        // --- FIM DA NOVA LÓGICA ---
                     } else {
                         console.error("LOG: Perfil do usuário NÃO encontrado após login (getUserById retornou null). Forçando logout.");
                         throw new Error("Perfil do usuário não encontrado após login.");
