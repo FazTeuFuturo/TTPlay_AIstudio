@@ -70,96 +70,10 @@ const mapCategoryFromDb = (data: any): TournamentCategory => ({
 
 // --- Initialization ---
 export const initializeDatabase = async () => {
-    console.log("Initializing database and seeding test users...");
-    const testUsersToSeed = [
-        {
-            email: 'admin@ttplay.com',
-            password: 'password123',
-            profile: {
-                name: 'Admin do Clube',
-                role: Role.CLUB_ADMIN,
-                gender: Gender.MALE,
-                birth_date: '1980-01-01',
-            },
-            club: {
-                name: 'Madureira Esporte Clube',
-                subscription: SubscriptionPlan.PRO,
-                logo: 'https://picsum.photos/seed/clubtest/100/100',
-            }
-        },
-        {
-            email: 'player@ttplay.com',
-            password: 'password123',
-            profile: {
-                name: 'Leandro Guerra de Souza',
-                role: Role.PLAYER,
-                gender: Gender.MALE,
-                birth_date: '1995-05-05',
-            }
-        }
-    ];
-
-    for (const userData of testUsersToSeed) {
-        // Client-side safe way to check for user existence
-        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-            email: userData.email,
-            password: userData.password,
-        });
-
-        let userId: string | undefined = signInData.user?.id;
-
-        if (signInError && signInError.message === 'Invalid login credentials') {
-            // User does not exist, so create them
-            console.log(`Creating test user: ${userData.email}`);
-            const { data: { user: newUser }, error: signUpError } = await supabase.auth.signUp({
-                email: userData.email,
-                password: userData.password,
-            });
-
-            if (signUpError || !newUser) {
-                console.error(`Failed to create test user ${userData.email}:`, signUpError?.message);
-                continue;
-            }
-            userId = newUser.id;
-
-            // Update profile for the newly created user
-            const { error: profileUpdateError } = await supabase
-                .from('users')
-                .update(userData.profile)
-                .eq('id', userId);
-            
-            if (profileUpdateError) console.error(`Failed to update profile for ${userData.email}:`, profileUpdateError.message);
-        
-        } else if (signInError) {
-            // Another sign-in error occurred
-            console.error(`Error checking for user ${userData.email}:`, signInError.message);
-            continue;
-        }
-
-        // At this point, user exists (either pre-existing or just created).
-        // Now handle club creation for admin.
-        if (userId && userData.profile.role === Role.CLUB_ADMIN && userData.club) {
-            const { data: existingClub } = await supabase.from('clubs').select('id').eq('admin_id', userId).single();
-            if (!existingClub) {
-                 console.log(`Creating club for ${userData.email}`);
-                 const { data: newClub, error: clubInsertError } = await supabase
-                    .from('clubs')
-                    .insert({ ...userData.club, admin_id: userId })
-                    .select('id')
-                    .single();
-
-                if (clubInsertError) {
-                     console.error(`Failed to create club for ${userData.email}:`, clubInsertError.message);
-                } else if (newClub) {
-                    const {error: clubLinkError } = await supabase.from('users').update({ club_id: newClub.id }).eq('id', userId);
-                    if(clubLinkError) console.error(`Failed to link club to admin ${userData.email}:`, clubLinkError.message);
-                }
-            }
-        }
-        
-        // Sign out to clean up the session before the next loop iteration or app start
-        await supabase.auth.signOut();
-    }
+    // A lógica de seeding de usuários de teste foi removida a pedido.
+    // Esta função agora pode ser usada para outras inicializações futuras, se necessário.
+    console.log("Database initialization skipped (seeding removed).");
+    return;
 };
 
 
@@ -182,6 +96,37 @@ export const login = async (email: string, password?: string): Promise<User | nu
   }
 
   return userProfile;
+};
+
+export const sendPasswordResetEmail = async (email: string) => {
+  // Usamos a URL exata que você forneceu
+  const redirectTo = `${window.location.origin}/reset-password`;
+
+  const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo,
+  });
+
+  if (error) {
+    console.error("Erro ao enviar email de recuperação:", error.message);
+    throw new Error(error.message);
+  }
+
+  return data;
+};
+
+export const updateUserPassword = async (newPassword: string) => {
+  console.log("LOG: Tentando atualizar a senha do usuário no Supabase...");
+  const { data, error } = await supabase.auth.updateUser({
+    password: newPassword
+  });
+
+  if (error) {
+    console.error("Erro ao atualizar a senha:", error.message);
+    throw new Error(error.message);
+  }
+
+  console.log("LOG: Senha atualizada com sucesso.");
+  return data;
 };
 
 export const registerPlayer = async (data: Partial<User>): Promise<User> => {

@@ -1,17 +1,33 @@
 import React, { useState, useEffect } from 'react';
-import { User, UserSession, Role, Club } from './types';
-import { initializeDatabase, login, logout, getCurrentUserSession, getUserById, registerPlayer, registerClub, getCart, addToCart, checkout, getClubById, transferClubAdminship, updateUserDetails } from './data-service';
-import { PingPongPaddleIcon, ShoppingCartIcon, SpinnerIcon } from './components/Icons';
-import AuthPage from './components/AuthPage';
-import CheckoutPage from './components/CheckoutPage';
-import SubscriptionPage from './components/SubscriptionPage';
-import AppLayout from './components/AppLayout';
-import Dashboard from './components/Dashboard';
-import PlayerEventsPage from './components/PlayerEventsPage';
-import ClubEventsPage from './components/ClubEventsPage';
-import PlayerProfileForm from './components/PlayerProfileForm';
-import ClubProfileForm from './components/ClubProfileForm';
+import { User, UserSession, Role, Club } from './types'; //
+import { Session } from '@supabase/supabase-js'; // <-- NOVO: Correção para o erro TS2352
+import { 
+  initializeDatabase, 
+  login, 
+  logout, 
+  getUserById, 
+  registerPlayer, 
+  registerClub, 
+  getCart, 
+  addToCart, 
+  checkout, 
+  getClubById, 
+  updateUserDetails 
+} from './data-service'; //
+import { PingPongPaddleIcon, ShoppingCartIcon, SpinnerIcon } from './components/Icons'; //
+import AuthPage from './components/AuthPage'; //
+import CheckoutPage from './components/CheckoutPage'; //
+import SubscriptionPage from './components/SubscriptionPage'; //
+import AppLayout from './components/AppLayout'; //
+import Dashboard from './components/Dashboard'; //
+import PlayerEventsPage from './components/PlayerEventsPage'; //
+import ClubEventsPage from './components/ClubEventsPage'; //
+import PlayerProfileForm from './components/PlayerProfileForm'; //
+import ClubProfileForm from './components/ClubProfileForm'; //
+import { supabase } from './lib/supabaseClient'; //
+import ResetPasswordPage from './components/ResetPasswordPage'; 
 
+// (O componente Header não muda)
 const Header: React.FC<{ user: User | null; managedClub: Club | null; onLogout: () => void; cartCount: number; onCartClick: () => void; }> = ({ user, managedClub, onLogout, cartCount, onCartClick }) => {
     const displayUser = managedClub ? {
         name: managedClub.name,
@@ -65,6 +81,7 @@ const Header: React.FC<{ user: User | null; managedClub: Club | null; onLogout: 
     );
 };
 
+// (O componente Footer não muda)
 const Footer: React.FC = () => (
     <footer className="bg-slate-900 border-t border-slate-800 mt-auto">
       <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 text-center text-slate-500">
@@ -78,64 +95,93 @@ type ModalView = 'checkout' | 'subscription' | 'none';
 
 
 const App: React.FC = () => {
-  const [session, setSession] = useState<UserSession | null>(null);
+  // <-- ALTERADO: Correção para o erro TS2352
+  const [session, setSession] = useState<Session | null>(null); 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [managedClub, setManagedClub] = useState<Club | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [mainView, setMainView] = useState<MainView>('dashboard');
   const [modalView, setModalView] = useState<ModalView>('none');
   const [cartCount, setCartCount] = useState(0);
-
-  const refreshData = async () => {
-    const currentSession = await getCurrentUserSession();
-    if (currentSession) {
-      setSession(currentSession);
-      const user = await getUserById(currentSession.userId);
-      
-      if (user) {
-        setCurrentUser(user);
-
-        if(user.role === Role.PLAYER) {
-            setCartCount(getCart().length);
-        }
-        if (user.role === Role.CLUB_ADMIN && user.clubId) {
-            const club = await getClubById(user.clubId);
-            setManagedClub(club || null);
-        } else {
-            setManagedClub(null);
-        }
-      } else {
-         setCurrentUser(null);
-      }
-
-    } else {
-      setSession(null);
-      setCurrentUser(null);
-      setManagedClub(null);
-      setCartCount(0);
-    }
-  }
+  const [isRecovering, setIsRecovering] = useState(false); 
 
   useEffect(() => {
-    const setup = async () => {
-      setIsLoading(true);
-      await initializeDatabase();
-      await refreshData();
-      setIsLoading(false);
+    // 1. Inicializa o DB
+    initializeDatabase().then(() => {
+        console.log("LOG: Database inicializado.");
+    });
+
+    // 2. Escuta por mudanças de autenticação
+    console.log("LOG: Configurando listener onAuthStateChange...");
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+        console.log(`LOG: onAuthStateChange EVENTO: ${event}`);
+
+        if (event === 'PASSWORD_RECOVERY') {
+            console.log("LOG: Modo de Recuperação de Senha ATIVADO.");
+            setIsRecovering(true); 
+            // <-- ALTERADO: Correção para o erro TS2352 (removido cast)
+            setSession(session); 
+            setCurrentUser(null); 
+            setManagedClub(null);
+            setIsLoading(false);
+        } else if (event === 'SIGNED_IN') {
+            console.log("LOG: Usuário LOGADO (SIGNED_IN).");
+            setIsRecovering(false); 
+            // <-- ALTERADO: Correção para o erro TS2352 (removido cast)
+            setSession(session);
+            if (session) {
+                const user = await getUserById(session.user.id);
+                if (user) {
+                    setCurrentUser(user);
+                    if (user.role === Role.PLAYER) {
+                        setCartCount(getCart().length);
+                    }
+                    if (user.role === Role.CLUB_ADMIN && user.clubId) {
+                        const club = await getClubById(user.clubId);
+                        setManagedClub(club || null);
+                    } else {
+                        setManagedClub(null);
+                    }
+                } else {
+                    setCurrentUser(null);
+                }
+            }
+            setIsLoading(false);
+        } else if (event === 'SIGNED_OUT') {
+            console.log("LOG: Usuário DESLOGADO (SIGNED_OUT).");
+            setIsRecovering(false); 
+            setSession(null);
+            setCurrentUser(null);
+            setManagedClub(null);
+            setCartCount(0);
+            setIsLoading(false);
+        } else if (event === 'INITIAL_SESSION') {
+            if (!session) {
+                console.log("LOG: Sessão inicial nula.");
+                setIsLoading(false);
+            }
+        }
+    });
+
+    // 3. Limpa o listener ao desmontar
+    return () => {
+        console.log("LOG: Limpando o listener de autenticação.");
+        authListener.subscription.unsubscribe();
     };
-    setup();
-  }, []);
+  }, []); 
+
 
   const handleLogin = async (email: string, password?: string) => {
     const user = await login(email, password || '');
     if (user) {
-        await refreshData();
+        console.log("LOG: Login bem sucedido, aguardando listener...");
         setMainView('dashboard'); 
     } else {
         alert("Email ou senha inválidos.");
     }
   };
   
+  // <-- CORREÇÃO: FUNÇÃO RESTAURADA (para erro TS2304)
   const handleRegisterPlayer = async (data: Partial<User>): Promise<boolean> => {
     try {
         const newUser = await registerPlayer(data);
@@ -148,6 +194,7 @@ const App: React.FC = () => {
     }
   }
 
+  // <-- CORREÇÃO: FUNÇÃO RESTAURADA (para erro TS2304)
   const handleRegisterClub = async (clubData: Partial<Club>, adminData: Partial<User>): Promise<boolean> => {
      try {
         const { club, admin } = await registerClub(clubData, adminData);
@@ -162,7 +209,6 @@ const App: React.FC = () => {
 
   const handleLogout = async () => {
     await logout();
-    await refreshData();
     setMainView('dashboard');
     setModalView('none');
   };
@@ -183,7 +229,7 @@ const App: React.FC = () => {
         const success = await checkout(currentUser.id);
         if (success) {
             alert('Pagamento simulado com sucesso! Inscrições confirmadas.');
-            await refreshData(); // Refresh to update registrations
+            setCartCount(0); 
             setModalView('none');
         } else {
             alert('Ocorreu um erro ao processar suas inscrições.');
@@ -199,7 +245,7 @@ const App: React.FC = () => {
             return <CheckoutPage currentUser={currentUser} onCheckout={handleCheckout} onBack={() => setModalView('none')} />;
         case 'subscription':
             return <SubscriptionPage onSubscribed={() => {
-                refreshData();
+                supabase.auth.refreshSession(); 
                 setModalView('none');
             }} onBack={() => setModalView('none')} />;
         default:
@@ -223,7 +269,7 @@ const App: React.FC = () => {
             if (currentUser.role === Role.PLAYER) {
                 return <PlayerProfileForm user={currentUser} mode="edit" onFormSubmit={async (data) => {
                     await updateUserDetails(currentUser.id, data);
-                    await refreshData();
+                    await supabase.auth.refreshSession(); 
                     setMainView('dashboard');
                 }} />;
             }
@@ -234,7 +280,7 @@ const App: React.FC = () => {
                     mode="edit" 
                     onFormClose={() => {
                         setMainView('dashboard');
-                        refreshData();
+                        supabase.auth.refreshSession(); 
                     }}
                     onAdminTransferSuccess={handleAdminTransferSuccess}
                  />;
@@ -247,6 +293,7 @@ const App: React.FC = () => {
   }
 
   if (isLoading) {
+    console.log("LOG: Renderizando: isLoading");
     return (
         <div className="min-h-screen flex items-center justify-center bg-slate-900">
             <SpinnerIcon className="w-12 h-12 text-blue-500"/>
@@ -254,7 +301,25 @@ const App: React.FC = () => {
     )
   }
 
+  if (isRecovering) {
+    console.log("LOG: Renderizando: ResetPasswordPage");
+    return (
+        <div className="min-h-screen flex flex-col bg-slate-900 bg-gradient-to-br from-slate-900 to-slate-800">
+          <main className="flex-grow w-full flex items-center justify-center">
+            <ResetPasswordPage 
+                onSuccess={() => {
+                    console.log("LOG: Senha redefinida com sucesso. Deslogando...");
+                    setIsRecovering(false); 
+                    handleLogout(); 
+                }}
+            />
+          </main>
+        </div>
+    );
+  }
+
   if (!session || !currentUser) {
+      console.log("LOG: Renderizando: AuthPage");
       return (
          <div className="min-h-screen flex flex-col bg-slate-900 bg-gradient-to-br from-slate-900 to-slate-800">
           <Header user={null} managedClub={null} onLogout={handleLogout} cartCount={0} onCartClick={() => {}} />
@@ -271,6 +336,7 @@ const App: React.FC = () => {
     }
     
     // Logged in view
+    console.log("LOG: Renderizando: AppLayout (Usuário logado)");
     return (
         <div className="min-h-screen flex flex-col bg-slate-900 bg-gradient-to-br from-slate-900 to-slate-800">
             <Header user={currentUser} managedClub={managedClub} onLogout={handleLogout} cartCount={cartCount} onCartClick={() => setModalView('checkout')} />
