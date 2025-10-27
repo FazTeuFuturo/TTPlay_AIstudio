@@ -119,7 +119,18 @@ const App: React.FC = () => {
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
         console.log(`LOG: onAuthStateChange EVENTO: ${event}, Session exists: ${!!session}`);
 
-        // Não definimos isLoading=true aqui, tratamos dentro de cada bloco
+        // Define isLoading=true APENAS no início, se não for INITIAL_SESSION sem sessão
+        // Isso garante que mostramos o loading durante o processamento
+        let shouldSetLoadingTrue = true;
+        if (event === 'INITIAL_SESSION' && !session) {
+            console.log(`LOG: Sessão inicial nula, NÃO definindo isLoading = true.`);
+            shouldSetLoadingTrue = false;
+        }
+
+        if (shouldSetLoadingTrue) {
+            console.log(`LOG: Definindo isLoading = true para evento ${event}`);
+            setIsLoading(true);
+        }
 
         try {
             if (event === 'PASSWORD_RECOVERY') {
@@ -128,24 +139,19 @@ const App: React.FC = () => {
                 setSession(session);
                 setCurrentUser(null);
                 setManagedClub(null);
-                setIsLoading(false); // Define isLoading false AQUI para recuperação
+                // isLoading tratado pelo finally
             } else if (event === 'SIGNED_IN') {
                 console.log("LOG: Usuário LOGADO (SIGNED_IN). Processando...");
                 setIsRecovering(false);
-                setSession(session); // Define a sessão logo
-
-                // Define isLoading false ANTES do async
-                setIsLoading(false);
-                console.log("LOG: isLoading DEFINIDO para false (antes de buscar perfil).");
+                // NÃO definimos a sessão ainda, esperamos ter o user
 
                 if (session) {
                     console.log(`LOG: Tentando buscar perfil para user ID: ${session.user.id}`);
-                    const user = await getUserById(session.user.id);
+                    const user = await getUserById(session.user.id); // Busca o perfil PRIMEIRO
                     console.log(`LOG: getUserById concluído. User found: ${!!user}`);
 
                     if (user) {
-                        console.log(`LOG: Perfil encontrado: ${user.name}. Configurando estado...`);
-                        setCurrentUser(user); // Atualiza o usuário
+                        console.log(`LOG: Perfil encontrado: ${user.name}. Configurando TODOS os estados...`);
                         let clubToSet = null;
                         let cartCountToSet = 0;
 
@@ -156,10 +162,12 @@ const App: React.FC = () => {
                             console.log(`LOG: Clube ${clubToSet ? clubToSet.name : 'NÃO'} encontrado.`);
                         }
 
-                        // Atualiza estados secundários (clube/carrinho)
-                        // Não precisamos de setSession de novo aqui
+                        // ATUALIZA TODOS OS ESTADOS DE UMA VEZ
+                        setSession(session); // Define a sessão JUNTO com o user
+                        setCurrentUser(user);
                         setManagedClub(clubToSet || null);
                         setCartCount(cartCountToSet);
+
                         console.log("LOG: Estado do usuário, clube e carrinho configurado.");
 
                         // Limpeza da URL
@@ -183,17 +191,14 @@ const App: React.FC = () => {
                 setCurrentUser(null);
                 setManagedClub(null);
                 setCartCount(0);
-                setIsLoading(false); // Define isLoading false AQUI para logout
-            } else if (event === 'INITIAL_SESSION') {
-                 if (!session) {
-                    console.log("LOG: Sessão inicial nula.");
-                     setIsLoading(false); // Define isLoading false AQUI para sessão inicial nula
-                } else {
-                    console.log("LOG: Sessão inicial encontrada. Aguardando evento SIGNED_IN...");
-                    // Se há sessão inicial, SIGNED_IN será disparado a seguir
-                    // Não definimos isLoading aqui, esperamos o SIGNED_IN tratar
-                }
+                 // isLoading tratado pelo finally
             }
+            // INITIAL_SESSION agora só controla o isLoading inicial
+            else if (event === 'INITIAL_SESSION' && session) {
+                 console.log("LOG: Sessão inicial encontrada. Aguardando processamento do SIGNED_IN...");
+                 // Não fazemos nada aqui, SIGNED_IN tratará tudo
+            }
+
         } catch (error: any) {
             console.error("LOG: Erro dentro do listener onAuthStateChange:", error.message);
             setIsRecovering(false);
@@ -204,9 +209,12 @@ const App: React.FC = () => {
             await supabase.auth.signOut().catch(signOutError => {
                 console.error("LOG: Erro adicional ao tentar deslogar no catch:", signOutError);
             });
-            setIsLoading(false); // Define isLoading false AQUI em caso de erro
+            // O finally tratará o isLoading
+        } finally {
+            // Este bloco agora SEMPRE será executado após o try ou catch
+            setIsLoading(false);
+            console.log(`LOG: Listener finalizado para evento ${event}. isLoading DEFINIDO para false.`);
         }
-        // Bloco finally removido
     });
 
     // 3. Limpa o listener ao desmontar
