@@ -113,55 +113,57 @@ const App: React.FC = () => {
 
     // 2. Escuta por mudanças de autenticação
     console.log("LOG: Configurando listener onAuthStateChange...");
+
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
         console.log(`LOG: onAuthStateChange EVENTO: ${event}`);
 
         try {
+            // Processa o evento PRIMEIRO
             if (event === 'PASSWORD_RECOVERY') {
                 console.log("LOG: Modo de Recuperação de Senha ATIVADO.");
                 setIsRecovering(true);
-                setSession(session);
+                setSession(session); // Define a sessão de recuperação
                 setCurrentUser(null);
                 setManagedClub(null);
-                setIsLoading(false); // <-- Define isLoading false AQUI para recuperação
             } else if (event === 'SIGNED_IN') {
                 console.log("LOG: Usuário LOGADO (SIGNED_IN). Processando...");
                 setIsRecovering(false);
-                setSession(session);
-                
-                // <-- DEFINE isLoading false LOGO AQUI, ANTES DO ASYNC
-                setIsLoading(false); 
-                console.log("LOG: isLoading DEFINIDO para false (antes de buscar perfil).");
+                setSession(session); // Define a sessão de login
 
                 if (session) {
                     console.log(`LOG: Tentando buscar perfil para user ID: ${session.user.id}`);
-                    const user = await getUserById(session.user.id); //
+                    const user = await getUserById(session.user.id); // Busca o perfil
                     console.log("LOG: getUserById concluído.");
 
                     if (user) {
                         console.log(`LOG: Perfil encontrado: ${user.name}. Configurando estado...`);
-                        setCurrentUser(user); // Define o usuário AQUI
-                        // A busca do clube e carrinho pode acontecer depois que o usuário já está definido
+                        setCurrentUser(user); // Define o usuário
                         if (user.role === Role.PLAYER) {
                             setCartCount(getCart().length);
                         }
                         if (user.role === Role.CLUB_ADMIN && user.clubId) {
                             console.log(`LOG: Buscando clube ID: ${user.clubId}`);
-                            const club = await getClubById(user.clubId); //
+                            const club = await getClubById(user.clubId);
                             setManagedClub(club || null);
                             console.log(`LOG: Clube ${club ? club.name : 'NÃO'} encontrado.`);
                         } else {
                             setManagedClub(null);
                         }
                         console.log("LOG: Estado do usuário e clube configurado.");
-                        
+
+                        // Limpeza da URL (do Passo 18) continua aqui
+                        if (window.location.pathname === '/reset-password') {
+                            console.log("LOG: URL atual é /reset-password. Limpando para /...");
+                            window.history.replaceState(null, '', '/');
+                            console.log("LOG: URL limpa.");
+                        }
                     } else {
                         console.error("LOG: Perfil do usuário NÃO encontrado após login (getUserById retornou null). Forçando logout.");
-                        throw new Error("Perfil do usuário não encontrado após login.");
+                        throw new Error("Perfil do usuário não encontrado após login."); // Vai para o catch
                     }
                 } else {
                      console.error("LOG: Evento SIGNED_IN mas a sessão era nula. Forçando logout.");
-                     throw new Error("Sessão 'SIGNED_IN' não encontrada.");
+                     throw new Error("Sessão 'SIGNED_IN' não encontrada."); // Vai para o catch
                 }
             } else if (event === 'SIGNED_OUT') {
                 console.log("LOG: Usuário DESLOGADO (SIGNED_OUT). Limpando estado...");
@@ -170,15 +172,15 @@ const App: React.FC = () => {
                 setCurrentUser(null);
                 setManagedClub(null);
                 setCartCount(0);
-                setIsLoading(false); // <-- Define isLoading false AQUI para logout
             } else if (event === 'INITIAL_SESSION') {
                  if (!session) {
                     console.log("LOG: Sessão inicial nula.");
-                     setIsLoading(false); // <-- Define isLoading false AQUI para sessão inicial nula
-                } else {
+                 } else {
                     console.log("LOG: Sessão inicial encontrada. Aguardando evento SIGNED_IN...");
-                    // Não definimos isLoading aqui, esperamos o SIGNED_IN tratar
-                }
+                    // Se há sessão inicial, SIGNED_IN será disparado a seguir e tratará o loading
+                    // Se não definirmos isLoading=false aqui, ele permanece true até SIGNED_IN terminar
+                    setIsLoading(true); // Garante que ficamos em loading até SIGNED_IN processar
+                 }
             }
         } catch (error: any) {
             console.error("LOG: Erro dentro do listener onAuthStateChange:", error.message);
@@ -190,12 +192,12 @@ const App: React.FC = () => {
             await supabase.auth.signOut().catch(signOutError => {
                 console.error("LOG: Erro adicional ao tentar deslogar no catch:", signOutError);
             });
-            setIsLoading(false); // <-- Define isLoading false AQUI em caso de erro
-        } 
-        // finally { // <-- REMOVIDO o finally
-        //     setIsLoading(false); 
-        //     console.log(`LOG: Listener finalizado para evento ${event}. isLoading DEFINIDO para false.`); 
-        // }
+            // O finally tratará o isLoading
+        } finally {
+            // Este bloco agora SEMPRE será executado após o try ou catch
+            setIsLoading(false);
+            console.log(`LOG: Listener finalizado para evento ${event}. isLoading DEFINIDO para false.`);
+        }
     });
 
     // 3. Limpa o listener ao desmontar
