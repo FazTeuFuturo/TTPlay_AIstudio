@@ -114,51 +114,72 @@ const App: React.FC = () => {
     // 2. Escuta por mudanças de autenticação
     console.log("LOG: Configurando listener onAuthStateChange...");
 
+
+    // (Linha ~113 do App.tsx)
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-        console.log(`LOG: onAuthStateChange EVENTO: ${event}`);
+        console.log(`LOG: onAuthStateChange EVENTO: ${event}, Session exists: ${!!session}`); // Log Adicional
+
+        // Define isLoading como true no início de cada evento, exceto INITIAL_SESSION sem sessão
+        // Isso garante que mostramos o loading durante o processamento assíncrono
+        if (!(event === 'INITIAL_SESSION' && !session)) {
+             console.log(`LOG: Definindo isLoading = true para evento ${event}`);
+             setIsLoading(true);
+        } else if (event === 'INITIAL_SESSION' && !session) {
+             console.log(`LOG: Sessão inicial nula, definindo isLoading = false diretamente.`);
+             setIsLoading(false); // Já sabemos que não há nada a carregar
+             return; // Sai cedo para evitar o finally desnecessário
+        }
+
 
         try {
-            // Processa o evento PRIMEIRO
             if (event === 'PASSWORD_RECOVERY') {
                 console.log("LOG: Modo de Recuperação de Senha ATIVADO.");
                 setIsRecovering(true);
-                setSession(session); // Define a sessão de recuperação
+                setSession(session);
                 setCurrentUser(null);
                 setManagedClub(null);
+                // isLoading tratado pelo finally
             } else if (event === 'SIGNED_IN') {
                 console.log("LOG: Usuário LOGADO (SIGNED_IN). Processando...");
                 setIsRecovering(false);
-                setSession(session); // Define a sessão de login
+                // NÃO definimos a sessão ainda
 
                 if (session) {
                     console.log(`LOG: Tentando buscar perfil para user ID: ${session.user.id}`);
-                    const user = await getUserById(session.user.id); // Busca o perfil
-                    console.log("LOG: getUserById concluído.");
+                    const user = await getUserById(session.user.id); // Busca o perfil PRIMEIRO
+                    console.log(`LOG: getUserById concluído. User found: ${!!user}`);
 
                     if (user) {
-                        console.log(`LOG: Perfil encontrado: ${user.name}. Configurando estado...`);
-                        setCurrentUser(user); // Define o usuário
+                        console.log(`LOG: Perfil encontrado: ${user.name}. Configurando TODOS os estados...`);
+                        let clubToSet = null;
+                        let cartCountToSet = 0;
+
+                        // Busca dados adicionais SE necessário
                         if (user.role === Role.PLAYER) {
-                            setCartCount(getCart().length);
+                            cartCountToSet = getCart().length;
                         }
                         if (user.role === Role.CLUB_ADMIN && user.clubId) {
                             console.log(`LOG: Buscando clube ID: ${user.clubId}`);
-                            const club = await getClubById(user.clubId);
-                            setManagedClub(club || null);
-                            console.log(`LOG: Clube ${club ? club.name : 'NÃO'} encontrado.`);
-                        } else {
-                            setManagedClub(null);
+                            clubToSet = await getClubById(user.clubId);
+                            console.log(`LOG: Clube ${clubToSet ? clubToSet.name : 'NÃO'} encontrado.`);
                         }
-                        console.log("LOG: Estado do usuário e clube configurado.");
 
-                        // Limpeza da URL (do Passo 18) continua aqui
+                        // ATUALIZA TODOS OS ESTADOS DE UMA VEZ
+                        setSession(session);
+                        setCurrentUser(user);
+                        setManagedClub(clubToSet || null);
+                        setCartCount(cartCountToSet);
+
+                        console.log("LOG: Estado do usuário, clube e carrinho configurado.");
+
+                        // Limpeza da URL
                         if (window.location.pathname === '/reset-password') {
                             console.log("LOG: URL atual é /reset-password. Limpando para /...");
                             window.history.replaceState(null, '', '/');
                             console.log("LOG: URL limpa.");
                         }
                     } else {
-                        console.error("LOG: Perfil do usuário NÃO encontrado após login (getUserById retornou null). Forçando logout.");
+                        console.error("LOG: Perfil do usuário NÃO encontrado após login. Forçando logout.");
                         throw new Error("Perfil do usuário não encontrado após login."); // Vai para o catch
                     }
                 } else {
@@ -172,16 +193,10 @@ const App: React.FC = () => {
                 setCurrentUser(null);
                 setManagedClub(null);
                 setCartCount(0);
-            } else if (event === 'INITIAL_SESSION') {
-                 if (!session) {
-                    console.log("LOG: Sessão inicial nula.");
-                 } else {
-                    console.log("LOG: Sessão inicial encontrada. Aguardando evento SIGNED_IN...");
-                    // Se há sessão inicial, SIGNED_IN será disparado a seguir e tratará o loading
-                    // Se não definirmos isLoading=false aqui, ele permanece true até SIGNED_IN terminar
-                    setIsLoading(true); // Garante que ficamos em loading até SIGNED_IN processar
-                 }
+                 // isLoading tratado pelo finally
             }
+            // Não precisamos mais tratar INITIAL_SESSION aqui, pois foi tratado no início
+            
         } catch (error: any) {
             console.error("LOG: Erro dentro do listener onAuthStateChange:", error.message);
             setIsRecovering(false);
@@ -194,7 +209,7 @@ const App: React.FC = () => {
             });
             // O finally tratará o isLoading
         } finally {
-            // Este bloco agora SEMPRE será executado após o try ou catch
+            // Este bloco agora SEMPRE será executado após o try ou catch (exceto INITIAL_SESSION nula)
             setIsLoading(false);
             console.log(`LOG: Listener finalizado para evento ${event}. isLoading DEFINIDO para false.`);
         }
