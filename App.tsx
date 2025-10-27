@@ -115,107 +115,102 @@ const App: React.FC = () => {
     console.log("LOG: Configurando listener onAuthStateChange...");
 
 
-// (Linha ~113 do App.tsx)
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-        console.log(`LOG: onAuthStateChange EVENTO: ${event}, Session exists: ${!!session}`);
+const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+    console.log(`LOG: onAuthStateChange EVENTO: ${event}, Session exists: ${!!session}`);
 
-        // Define isLoading=true APENAS no início, se não for INITIAL_SESSION sem sessão
-        // Isso garante que mostramos o loading durante o processamento
-        let shouldSetLoadingTrue = true;
-        if (event === 'INITIAL_SESSION' && !session) {
-            console.log(`LOG: Sessão inicial nula, NÃO definindo isLoading = true.`);
-            shouldSetLoadingTrue = false;
+    try {
+        // PASSWORD_RECOVERY: Modo especial de redefinição de senha
+        if (event === 'PASSWORD_RECOVERY') {
+            console.log("LOG: Modo de Recuperação de Senha ATIVADO.");
+            setIsRecovering(true);
+            setSession(session);
+            setCurrentUser(null);
+            setManagedClub(null);
+            setIsLoading(false);
+            return; // Importante: sai do listener para não processar mais nada
         }
 
-        if (shouldSetLoadingTrue) {
-            console.log(`LOG: Definindo isLoading = true para evento ${event}`);
-            setIsLoading(true);
-        }
-
-        try {
-            if (event === 'PASSWORD_RECOVERY') {
-                console.log("LOG: Modo de Recuperação de Senha ATIVADO.");
-                setIsRecovering(true);
-                setSession(session);
-                setCurrentUser(null);
-                setManagedClub(null);
-                // isLoading tratado pelo finally
-            } else if (event === 'SIGNED_IN') {
-                console.log("LOG: Usuário LOGADO (SIGNED_IN). Processando...");
-                setIsRecovering(false);
-                // NÃO definimos a sessão ainda, esperamos ter o user
-
-                if (session) {
-                    console.log(`LOG: Tentando buscar perfil para user ID: ${session.user.id}`);
-                    const user = await getUserById(session.user.id); // Busca o perfil PRIMEIRO
-                    console.log(`LOG: getUserById concluído. User found: ${!!user}`);
-
-                    if (user) {
-                        console.log(`LOG: Perfil encontrado: ${user.name}. Configurando TODOS os estados...`);
-                        let clubToSet = null;
-                        let cartCountToSet = 0;
-
-                        if (user.role === Role.PLAYER) cartCountToSet = getCart().length;
-                        if (user.role === Role.CLUB_ADMIN && user.clubId) {
-                            console.log(`LOG: Buscando clube ID: ${user.clubId}`);
-                            clubToSet = await getClubById(user.clubId);
-                            console.log(`LOG: Clube ${clubToSet ? clubToSet.name : 'NÃO'} encontrado.`);
-                        }
-
-                        // ATUALIZA TODOS OS ESTADOS DE UMA VEZ
-                        setSession(session); // Define a sessão JUNTO com o user
-                        setCurrentUser(user);
-                        setManagedClub(clubToSet || null);
-                        setCartCount(cartCountToSet);
-
-                        console.log("LOG: Estado do usuário, clube e carrinho configurado.");
-
-                        // Limpeza da URL
-                        if (window.location.pathname === '/reset-password') {
-                            console.log("LOG: URL atual é /reset-password. Limpando para /...");
-                            window.history.replaceState(null, '', '/');
-                            console.log("LOG: URL limpa.");
-                        }
-                    } else {
-                        console.error("LOG: Perfil do usuário NÃO encontrado após login. Forçando logout.");
-                        throw new Error("Perfil do usuário não encontrado após login.");
-                    }
-                } else {
-                     console.error("LOG: Evento SIGNED_IN mas a sessão era nula. Forçando logout.");
-                     throw new Error("Sessão 'SIGNED_IN' não encontrada.");
-                }
-            } else if (event === 'SIGNED_OUT') {
-                console.log("LOG: Usuário DESLOGADO (SIGNED_OUT). Limpando estado...");
-                setIsRecovering(false);
-                setSession(null);
-                setCurrentUser(null);
-                setManagedClub(null);
-                setCartCount(0);
-                 // isLoading tratado pelo finally
-            }
-            // INITIAL_SESSION agora só controla o isLoading inicial
-            else if (event === 'INITIAL_SESSION' && session) {
-                 console.log("LOG: Sessão inicial encontrada. Aguardando processamento do SIGNED_IN...");
-                 // Não fazemos nada aqui, SIGNED_IN tratará tudo
-            }
-
-        } catch (error: any) {
-            console.error("LOG: Erro dentro do listener onAuthStateChange:", error.message);
+        // SIGNED_OUT: Limpa tudo
+        if (event === 'SIGNED_OUT') {
+            console.log("LOG: Usuário DESLOGADO (SIGNED_OUT). Limpando estado...");
             setIsRecovering(false);
             setSession(null);
             setCurrentUser(null);
             setManagedClub(null);
             setCartCount(0);
-            await supabase.auth.signOut().catch(signOutError => {
-                console.error("LOG: Erro adicional ao tentar deslogar no catch:", signOutError);
-            });
-            // O finally tratará o isLoading
-        } finally {
-            // Este bloco agora SEMPRE será executado após o try ou catch
             setIsLoading(false);
-            console.log(`LOG: Listener finalizado para evento ${event}. isLoading DEFINIDO para false.`);
+            return;
         }
-    });
+
+        // INITIAL_SESSION ou SIGNED_IN: Processa a sessão da mesma forma
+        if ((event === 'INITIAL_SESSION' || event === 'SIGNED_IN') && session) {
+            console.log(`LOG: Processando sessão (${event})...`);
+            setIsRecovering(false);
+
+            console.log(`LOG: Buscando perfil para user ID: ${session.user.id}`);
+            const user = await getUserById(session.user.id);
+            console.log(`LOG: getUserById concluído. User found: ${!!user}`);
+
+            if (user) {
+                console.log(`LOG: Perfil encontrado: ${user.name}. Configurando estados...`);
+                let clubToSet = null;
+                let cartCountToSet = 0;
+
+                if (user.role === Role.PLAYER) {
+                    cartCountToSet = getCart().length;
+                }
+                
+                if (user.role === Role.CLUB_ADMIN && user.clubId) {
+                    console.log(`LOG: Buscando clube ID: ${user.clubId}`);
+                    clubToSet = await getClubById(user.clubId);
+                    console.log(`LOG: Clube ${clubToSet ? 'encontrado' : 'NÃO encontrado'}.`);
+                }
+
+                // Atualiza todos os estados de uma vez
+                setSession(session);
+                setCurrentUser(user);
+                setManagedClub(clubToSet || null);
+                setCartCount(cartCountToSet);
+
+                console.log("LOG: Estados configurados com sucesso.");
+
+                // Limpeza da URL após reset de senha
+                if (window.location.pathname === '/reset-password') {
+                    console.log("LOG: Limpando URL /reset-password...");
+                    window.history.replaceState(null, '', '/');
+                }
+            } else {
+                console.error("LOG: Perfil não encontrado. Forçando logout.");
+                throw new Error("Perfil do usuário não encontrado.");
+            }
+        }
+        
+        // INITIAL_SESSION sem sessão: usuário não está logado
+        if (event === 'INITIAL_SESSION' && !session) {
+            console.log("LOG: Nenhuma sessão encontrada. Usuário não está logado.");
+            setIsRecovering(false);
+            setSession(null);
+            setCurrentUser(null);
+            setManagedClub(null);
+            setCartCount(0);
+        }
+
+    } catch (error: any) {
+        console.error("LOG: Erro no listener:", error.message);
+        setIsRecovering(false);
+        setSession(null);
+        setCurrentUser(null);
+        setManagedClub(null);
+        setCartCount(0);
+        
+        await supabase.auth.signOut().catch(signOutError => {
+            console.error("LOG: Erro ao fazer signOut:", signOutError);
+        });
+    } finally {
+        setIsLoading(false);
+        console.log(`LOG: Listener finalizado para ${event}. isLoading = false.`);
+    }
+});
 
     // 3. Limpa o listener ao desmontar
     return () => {
