@@ -116,63 +116,56 @@ const App: React.FC = () => {
 
 
     // (Linha ~113 do App.tsx)
+ // (Linha ~113 do App.tsx)
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-        console.log(`LOG: onAuthStateChange EVENTO: ${event}, Session exists: ${!!session}`); // Log Adicional
+        console.log(`LOG: onAuthStateChange EVENTO: ${event}, Session exists: ${!!session}`);
 
-        // Define isLoading como true no início de cada evento, exceto INITIAL_SESSION sem sessão
-        // Isso garante que mostramos o loading durante o processamento assíncrono
-        if (!(event === 'INITIAL_SESSION' && !session)) {
-             console.log(`LOG: Definindo isLoading = true para evento ${event}`);
+        // Define isLoading como true APENAS ao iniciar
+        if (event === 'INITIAL_SESSION') {
+             console.log(`LOG: Evento INITIAL_SESSION. Definindo isLoading = true.`);
              setIsLoading(true);
-        } else if (event === 'INITIAL_SESSION' && !session) {
-             console.log(`LOG: Sessão inicial nula, definindo isLoading = false diretamente.`);
-             setIsLoading(false); // Já sabemos que não há nada a carregar
-             return; // Sai cedo para evitar o finally desnecessário
         }
 
-
         try {
+            // Prioridade MÁXIMA para PASSWORD_RECOVERY
             if (event === 'PASSWORD_RECOVERY') {
                 console.log("LOG: Modo de Recuperação de Senha ATIVADO.");
                 setIsRecovering(true);
                 setSession(session);
                 setCurrentUser(null);
                 setManagedClub(null);
-                // isLoading tratado pelo finally
+                // O finally tratará o isLoading
             } else if (event === 'SIGNED_IN') {
                 console.log("LOG: Usuário LOGADO (SIGNED_IN). Processando...");
-                setIsRecovering(false);
-                // NÃO definimos a sessão ainda
+                // Se estávamos recuperando, cancela esse modo AGORA
+                if (isRecovering) {
+                    console.log("LOG: Saindo do modo de recuperação devido a SIGNED_IN inesperado.");
+                    setIsRecovering(false);
+                }
+                setSession(session);
 
                 if (session) {
                     console.log(`LOG: Tentando buscar perfil para user ID: ${session.user.id}`);
-                    const user = await getUserById(session.user.id); // Busca o perfil PRIMEIRO
+                    const user = await getUserById(session.user.id);
                     console.log(`LOG: getUserById concluído. User found: ${!!user}`);
 
                     if (user) {
-                        console.log(`LOG: Perfil encontrado: ${user.name}. Configurando TODOS os estados...`);
+                        console.log(`LOG: Perfil encontrado: ${user.name}. Configurando estados...`);
                         let clubToSet = null;
                         let cartCountToSet = 0;
 
-                        // Busca dados adicionais SE necessário
-                        if (user.role === Role.PLAYER) {
-                            cartCountToSet = getCart().length;
-                        }
+                        if (user.role === Role.PLAYER) cartCountToSet = getCart().length;
                         if (user.role === Role.CLUB_ADMIN && user.clubId) {
                             console.log(`LOG: Buscando clube ID: ${user.clubId}`);
                             clubToSet = await getClubById(user.clubId);
                             console.log(`LOG: Clube ${clubToSet ? clubToSet.name : 'NÃO'} encontrado.`);
                         }
 
-                        // ATUALIZA TODOS OS ESTADOS DE UMA VEZ
-                        setSession(session);
                         setCurrentUser(user);
                         setManagedClub(clubToSet || null);
                         setCartCount(cartCountToSet);
-
                         console.log("LOG: Estado do usuário, clube e carrinho configurado.");
 
-                        // Limpeza da URL
                         if (window.location.pathname === '/reset-password') {
                             console.log("LOG: URL atual é /reset-password. Limpando para /...");
                             window.history.replaceState(null, '', '/');
@@ -180,26 +173,29 @@ const App: React.FC = () => {
                         }
                     } else {
                         console.error("LOG: Perfil do usuário NÃO encontrado após login. Forçando logout.");
-                        throw new Error("Perfil do usuário não encontrado após login."); // Vai para o catch
+                        throw new Error("Perfil do usuário não encontrado após login.");
                     }
                 } else {
                      console.error("LOG: Evento SIGNED_IN mas a sessão era nula. Forçando logout.");
-                     throw new Error("Sessão 'SIGNED_IN' não encontrada."); // Vai para o catch
+                     throw new Error("Sessão 'SIGNED_IN' não encontrada.");
                 }
             } else if (event === 'SIGNED_OUT') {
                 console.log("LOG: Usuário DESLOGADO (SIGNED_OUT). Limpando estado...");
-                setIsRecovering(false);
+                 // Se estávamos recuperando, cancela esse modo AGORA
+                 if (isRecovering) {
+                    console.log("LOG: Saindo do modo de recuperação devido a SIGNED_OUT.");
+                    setIsRecovering(false);
+                }
                 setSession(null);
                 setCurrentUser(null);
                 setManagedClub(null);
                 setCartCount(0);
-                 // isLoading tratado pelo finally
             }
-            // Não precisamos mais tratar INITIAL_SESSION aqui, pois foi tratado no início
+            // INITIAL_SESSION só define isLoading=true no início
             
         } catch (error: any) {
             console.error("LOG: Erro dentro do listener onAuthStateChange:", error.message);
-            setIsRecovering(false);
+            setIsRecovering(false); // Garante sair do modo de recuperação em erro
             setSession(null);
             setCurrentUser(null);
             setManagedClub(null);
@@ -207,9 +203,8 @@ const App: React.FC = () => {
             await supabase.auth.signOut().catch(signOutError => {
                 console.error("LOG: Erro adicional ao tentar deslogar no catch:", signOutError);
             });
-            // O finally tratará o isLoading
         } finally {
-            // Este bloco agora SEMPRE será executado após o try ou catch (exceto INITIAL_SESSION nula)
+            // O finally SEMPRE define isLoading = false
             setIsLoading(false);
             console.log(`LOG: Listener finalizado para evento ${event}. isLoading DEFINIDO para false.`);
         }
