@@ -109,124 +109,59 @@ const App: React.FC = () => {
   const [isRecovering, setIsRecovering] = useState(false);
 
   useEffect(() => {
-    // Flag para evitar set state se o componente desmontar
     let isMounted = true;
 
-    initializeDatabase().then(() => console.log("LOG: Database inicializado."));
+    const checkSession = async () => {
+      setIsLoading(true);
+      
+      const { data: { session } } = await supabase.auth.getSession();
 
-    console.log("LOG: Configurando listener onAuthStateChange...");
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-      // Se não estiver montado, não faz nada
-      if (!isMounted) {
-          console.log(`LOG: Componente desmontado, ignorando evento ${event}`);
-          return;
-      }
-
-      console.log(`LOG: onAuthStateChange EVENTO: ${event}, Session exists: ${!!session}`);
-
-      // Garante que mostramos o loading durante o processamento assíncrono
-      // Exceto se for INITIAL_SESSION sem sessão (já sabemos que não há nada a carregar)
-      if (!(event === 'INITIAL_SESSION' && !session)) {
-          console.log(`LOG: Definindo isLoading = true para evento ${event}`);
-          setIsLoading(true);
-      } else {
-          // INITIAL_SESSION sem sessão -> Define loading false e limpa estados
-          console.log("LOG: Sessão inicial nula. Definindo isLoading = false e limpando estados.");
-          setIsLoading(false);
-          setSession(null);
-          setCurrentUser(null);
-          setManagedClub(null);
-          setCartCount(0);
-          setIsRecovering(false);
-          return; // Sai cedo
-      }
-
-      try {
-        // Bloco try principal para processar eventos
-        if (event === 'PASSWORD_RECOVERY') {
-          console.log("LOG: Modo de Recuperação ATIVADO.");
-          setIsRecovering(true);
-          setSession(session); // Guarda a sessão de recuperação
-          // Garante limpeza de dados antigos
-          setCurrentUser(null);
-          setManagedClub(null);
-          setCartCount(0);
-        } else if (event === 'SIGNED_OUT') {
-          console.log("LOG: Usuário DESLOGADO. Limpando estado.");
-          setIsRecovering(false); // Garante sair do modo recuperação
-          setSession(null);
-          setCurrentUser(null);
-          setManagedClub(null);
-          setCartCount(0);
-        } else if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') && session) {
-          // Eventos que indicam uma sessão (potencialmente) válida
-          console.log(`LOG: Sessão válida (${event}). Buscando dados...`);
-          setIsRecovering(false); // Garante sair do modo recuperação
-
-          const user = await getUserById(session.user.id);
-          console.log(`LOG: getUserById concluído. User found: ${!!user}`);
-
-          if (user) {
-            // Se encontrámos o utilizador, atualizamos tudo
-            let clubToSet = null;
-            let cartCountToSet = 0;
-            if (user.role === Role.PLAYER) cartCountToSet = getCart().length;
-            if (user.role === Role.CLUB_ADMIN && user.clubId) {
-              clubToSet = await getClubById(user.clubId);
-            }
-
-            // Define todos os estados relevantes JUNTOS
-            setSession(session);
-            setCurrentUser(user);
-            setManagedClub(clubToSet || null);
-            setCartCount(cartCountToSet);
-            console.log(`LOG: Estados atualizados para ${user.name}.`);
-
-            // Limpa URL se necessário
-            if (window.location.pathname === '/reset-password') {
-              console.log("LOG: Limpando URL /reset-password...");
-              window.history.replaceState(null, '', '/');
-            }
-          } else {
-            // User não encontrado no DB -> Força logout
-            console.error("LOG: Perfil não encontrado no DB! Forçando logout.");
-            throw new Error("Perfil não encontrado"); // Vai para o catch
+      if (session && isMounted) {
+        const user = await getUserById(session.user.id);
+        if (user && isMounted) {
+          let clubToSet = null;
+          if (user.role === Role.CLUB_ADMIN && user.clubId) {
+            clubToSet = await getClubById(user.clubId);
           }
+          setSession(session);
+          setCurrentUser(user);
+          setManagedClub(clubToSet);
+          setCartCount(user.role === Role.PLAYER ? getCart().length : 0);
         } else {
-            // Outros eventos ou sessão nula inesperada
-             console.log(`LOG: Evento ${event} sem sessão válida. Forçando limpeza.`);
-             throw new Error("Sessão inválida ou evento inesperado"); // Vai para o catch
-        }
-
-      } catch (error: any) {
-        // Bloco catch para lidar com erros na busca ou lógica acima
-        console.error("LOG: Erro no processamento do evento:", error.message);
-        // Garante a limpeza completa do estado em caso de erro
-        setIsRecovering(false);
-        setSession(null);
-        setCurrentUser(null);
-        setManagedClub(null);
-        setCartCount(0);
-        // Tenta deslogar silenciosamente se não for já um SIGNED_OUT
-        if (event !== 'SIGNED_OUT') {
-            await supabase.auth.signOut().catch(e => console.error("Erro no signOut do catch:", e));
-        }
-      } finally {
-        // Bloco finally SEMPRE define isLoading como false no final
-        if (isMounted) {
-            setIsLoading(false);
-            console.log(`LOG: Listener finalizado para evento ${event}. isLoading DEFINIDO para false.`);
+          // Se a sessão existe mas o usuário não está no DB, desloga.
+          await logout();
+          setSession(null);
+          setCurrentUser(null);
         }
       }
+      
+      if (isMounted) {
+        setIsLoading(false);
+      }
+    };
+
+    checkSession();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+        if (_event === 'SIGNED_IN' && session) {
+            checkSession();
+        }
+        if (_event === 'SIGNED_OUT') {
+            setSession(null);
+            setCurrentUser(null);
+            setManagedClub(null);
+            setCartCount(0);
+        }
+        if (_event === 'PASSWORD_RECOVERY') {
+            setIsRecovering(true);
+        }
     });
 
-    // Função de limpeza
     return () => {
-      isMounted = false; // Define a flag como false quando o componente desmonta
-      console.log("LOG: Limpando listener.");
+      isMounted = false;
       authListener.subscription.unsubscribe();
     };
-  }, []); // Array de dependências vazio para rodar apenas uma vez na montagem
+  }, []);
 
 
   // Funções handleLogin, handleRegister*, handleLogout, etc. (sem alterações)
@@ -303,14 +238,25 @@ const App: React.FC = () => {
 
   // Funções renderModalContent e renderMainContent (sem alterações)
   const renderModalContent = () => {
-     if (!currentUser) return null; // Será tratado pelo spinner na renderização principal
-     switch(modalView) { /* ... */ }
-     return null; // Adicionado retorno padrão
+    if (!currentUser) return null;
+    switch (modalView) {
+      // Adicione casos para 'checkout', 'subscription', etc. aqui se necessário
+      default:
+        return null;
+    }
   };
+
   const renderMainContent = () => {
-     if (!currentUser) return null; // Será tratado pelo spinner na renderização principal
-     switch(mainView) { /* ... */ }
-     return null; // Adicionado retorno padrão
+    if (!currentUser) return null;
+    switch (mainView) {
+      case 'events':
+        return currentUser.role === Role.PLAYER ? <PlayerEventsPage user={currentUser} onAddToCart={handleAddToCart} /> : <ClubEventsPage user={currentUser} />;
+      case 'profile':
+        return currentUser.role === Role.PLAYER ? <PlayerProfileForm user={currentUser} onFormSubmit={updateUserDetails} /> : <ClubProfileForm user={currentUser} onFormSubmit={updateUserDetails} onAdminTransferSuccess={handleAdminTransferSuccess} />;
+      case 'dashboard':
+      default:
+        return <Dashboard user={currentUser} />;
+    }
   };
 
   // --- LÓGICA DE RENDERIZAÇÃO PRINCIPAL ---
@@ -355,9 +301,9 @@ const App: React.FC = () => {
             {/* Passa session aqui */}
             <Header user={currentUser} managedClub={managedClub} onLogout={handleLogout} cartCount={cartCount} onCartClick={() => setModalView('checkout')} session={session} />
             {currentUser ? (
-               <AppLayout user={currentUser} managedClub={managedClub} activeView={mainView} onNavigate={setMainView}>
-                    {modalView !== 'none' ? renderModalContent() : renderMainContent()}
-                </AppLayout>
+            <AppLayout user={currentUser} managedClub={managedClub} activeView={mainView} onNavigate={setMainView}>
+              {modalView !== 'none' ? renderModalContent() : renderMainContent()}
+            </AppLayout>
              ) : ( // Spinner interno enquanto busca currentUser após sessão ser confirmada
                  <div className="flex-grow flex items-center justify-center"><SpinnerIcon className="w-12 h-12 text-blue-500"/></div>
              )}

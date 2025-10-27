@@ -15,8 +15,16 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 // --- FIM DA CORREÇÃO ---
 
-// 3. Crie o cliente com as variáveis seguras
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// 3. Crie o cliente com as variáveis seguras e opções personalizadas
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    // Desativa a atualização automática de token, que causa o recarregamento
+    // ao focar na janela. A sessão ainda será persistida.
+    autoRefreshToken: false,
+    persistSession: true,
+    detectSessionInUrl: true,
+  },
+});
 
 // 4. Sua função (estava correta, sem alterações)
 export const getSupabaseUser = async (): Promise<(User & { clubId?: string }) | null> => {

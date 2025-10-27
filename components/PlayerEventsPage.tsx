@@ -117,8 +117,15 @@ const PlayerEventsPage: React.FC<PlayerEventsPageProps> = ({ playerUser, onAddTo
   const [selectedCategory, setSelectedCategory] = useState<TournamentCategory | null>(null);
   const [currentUser, setCurrentUser] = useState<User>(playerUser);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   const fetchData = async () => {
+    setIsLoading(true);
+    if (!playerUser) {
+        setEvents([]);
+        setIsLoading(false);
+        return;
+    }
     const allEvents = await getTournamentEvents();
     const allCategories = await getTournamentCategories();
 
@@ -131,6 +138,7 @@ const PlayerEventsPage: React.FC<PlayerEventsPageProps> = ({ playerUser, onAddTo
     const user = await getUserById(playerUser.id);
     setCurrentUser(user || playerUser);
     setCartItems(getCart());
+    setIsLoading(false);
   }
 
   useEffect(() => {
@@ -186,15 +194,23 @@ const PlayerEventsPage: React.FC<PlayerEventsPageProps> = ({ playerUser, onAddTo
   return (
     <div className="animate-fade-in">
         <h2 className="text-3xl font-extrabold tracking-tight text-white mb-8">Eventos Disponíveis</h2>
-      <div className="grid grid-cols-1 gap-6">
-        {events.map(event => (
-          <EventCard 
-            key={event.id} 
-            event={event} 
-            onSelect={() => setSelectedEvent(event)}
-          />
-        ))}
-      </div>
+        {isLoading ? (
+            <p className="text-slate-400">Carregando eventos...</p>
+        ) : events.length > 0 ? (
+            <div className="grid grid-cols-1 gap-6">
+                {events.map(event => (
+                <EventCard 
+                    key={event.id} 
+                    event={event} 
+                    onSelect={() => setSelectedEvent(event)}
+                />
+                ))}
+            </div>
+        ) : (
+            <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-5 text-center">
+                <p className="text-slate-400">Nenhum evento disponível no momento.</p>
+            </div>
+        )}
     </div>
   );
 };
