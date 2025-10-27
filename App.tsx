@@ -102,46 +102,26 @@ const App: React.FC = () => {
   const [isRecovering, setIsRecovering] = useState(false);
   
   const lastProcessedUserRef = useRef<string | null>(null);
-  const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
+    let mounted = true;
+    
     const initializeApp = async () => {
       console.log("LOG: Iniciando aplicação...");
-      
-      // Timeout de segurança: se ficar mais de 8 segundos carregando, força limpeza
-      loadingTimeoutRef.current = setTimeout(() => {
-        console.error("LOG: TIMEOUT! Sessão não carregou em 8 segundos. Forçando limpeza...");
-        handleCorruptedSession();
-      }, 8000);
 
       try {
         await initializeDatabase();
         console.log("LOG: Database inicializado.");
 
-        // CRÍTICO: Aguarda a sessão estar pronta ANTES de configurar o listener
-        console.log("LOG: Verificando sessão existente...");
-        const { data: { session: initialSession }, error } = await supabase.auth.getSession();
-        
-        if (error) {
-          console.error("LOG: Erro ao buscar sessão inicial:", error.message);
-          throw new Error("Sessão corrompida");
-        }
-
-        console.log(`LOG: Sessão inicial verificada. Exists: ${!!initialSession}`);
-
-        // Configura o listener DEPOIS de verificar a sessão
         console.log("LOG: Configurando listener onAuthStateChange...");
         
         const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+          if (!mounted) return;
+          
           console.log(`LOG: onAuthStateChange EVENTO: ${event}, Session exists: ${!!session}`);
 
-          // Cancela o timeout pois recebemos um evento
-          if (loadingTimeoutRef.current) {
-            clearTimeout(loadingTimeoutRef.current);
-            loadingTimeoutRef.current = null;
-          }
-
           try {
+            // PASSWORD_RECOVERY
             if (event === 'PASSWORD_RECOVERY') {
               console.log("LOG: Modo de Recuperação de Senha ATIVADO.");
               setIsRecovering(true);
@@ -153,8 +133,9 @@ const App: React.FC = () => {
               return;
             }
 
+            // SIGNED_OUT
             if (event === 'SIGNED_OUT') {
-              console.log("LOG: Usuário DESLOGADO (SIGNED_OUT). Limpando estado...");
+              console.log("LOG: Usuário DESLOGADO. Limpando estado...");
               setIsRecovering(false);
               setSession(null);
               setCurrentUser(null);
@@ -165,8 +146,9 @@ const App: React.FC = () => {
               return;
             }
 
+            // INITIAL_SESSION sem sessão
             if (event === 'INITIAL_SESSION' && !session) {
-              console.log("LOG: Nenhuma sessão encontrada. Usuário não está logado.");
+              console.log("LOG: Nenhuma sessão encontrada.");
               setIsRecovering(false);
               setSession(null);
               setCurrentUser(null);
@@ -177,9 +159,12 @@ const App: React.FC = () => {
               return;
             }
 
+            // TOKEN_REFRESHED, INITIAL_SESSION ou SIGNED_IN com sessão
             if ((event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION' || event === 'SIGNED_IN') && session) {
+              
+              // Anti-loop: ignora se já processamos este usuário
               if (lastProcessedUserRef.current === session.user.id) {
-                console.log(`LOG: Usuário já processado. IGNORANDO evento duplicado ${event}.`);
+                console.log(`LOG: Usuário já processado. IGNORANDO ${event}.`);
                 setIsLoading(false);
                 return;
               }
@@ -187,12 +172,11 @@ const App: React.FC = () => {
               console.log(`LOG: Processando sessão (${event})...`);
               setIsRecovering(false);
 
-              console.log(`LOG: Buscando perfil para user ID: ${session.user.id}`);
               const user = await getUserById(session.user.id);
-              console.log(`LOG: getUserById concluído. User found: ${!!user}`);
+              console.log(`LOG: User found: ${!!user}`);
 
               if (user) {
-                console.log(`LOG: Perfil encontrado: ${user.name}. Configurando estados...`);
+                console.log(`LOG: Perfil: ${user.name}`);
                 let clubToSet = null;
                 let cartCountToSet = 0;
 
@@ -201,9 +185,7 @@ const App: React.FC = () => {
                 }
                 
                 if (user.role === Role.CLUB_ADMIN && user.clubId) {
-                  console.log(`LOG: Buscando clube ID: ${user.clubId}`);
                   clubToSet = await getClubById(user.clubId);
-                  console.log(`LOG: Clube ${clubToSet ? 'encontrado' : 'NÃO encontrado'}.`);
                 }
 
                 setSession(session);
@@ -212,86 +194,48 @@ const App: React.FC = () => {
                 setCartCount(cartCountToSet);
                 lastProcessedUserRef.current = session.user.id;
 
-                console.log("LOG: Estados configurados com sucesso.");
-
                 if (window.location.pathname === '/reset-password') {
-                  console.log("LOG: Limpando URL /reset-password...");
                   window.history.replaceState(null, '', '/');
                 }
+                
+                console.log("LOG: ✓ Estados configurados.");
               } else {
-                console.error("LOG: Perfil não encontrado. Forçando logout.");
-                throw new Error("Perfil do usuário não encontrado.");
+                console.error("LOG: Perfil não encontrado. Logout forçado.");
+                await supabase.auth.signOut();
               }
             }
 
           } catch (error: any) {
             console.error("LOG: Erro no listener:", error.message);
-            handleCorruptedSession();
+            await supabase.auth.signOut();
           } finally {
-            setIsLoading(false);
-            console.log(`LOG: Listener finalizado para ${event}. isLoading = false.`);
+            if (mounted) {
+              setIsLoading(false);
+            }
           }
         });
 
-        // Cleanup
         return () => {
-          console.log("LOG: Limpando o listener de autenticação.");
-          if (loadingTimeoutRef.current) {
-            clearTimeout(loadingTimeoutRef.current);
-          }
+          mounted = false;
+          console.log("LOG: Limpando listener.");
           authListener.subscription.unsubscribe();
         };
 
       } catch (error: any) {
         console.error("LOG: Erro na inicialização:", error.message);
-        handleCorruptedSession();
+        if (mounted) {
+          setIsLoading(false);
+        }
       }
     };
 
     initializeApp();
   }, []);
 
-  const handleCorruptedSession = async () => {
-    console.log("LOG: Executando limpeza de sessão corrompida...");
-    
-    // Limpa TUDO relacionado a autenticação
-    setIsRecovering(false);
-    setSession(null);
-    setCurrentUser(null);
-    setManagedClub(null);
-    setCartCount(0);
-    lastProcessedUserRef.current = null;
-    
-    try {
-      // Força signOut no Supabase
-      await supabase.auth.signOut();
-      
-      // Limpa localStorage manualmente (caso o signOut falhe)
-      const keysToRemove: string[] = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && (key.includes('supabase') || key.includes('sb-'))) {
-          keysToRemove.push(key);
-        }
-      }
-      keysToRemove.forEach(key => localStorage.removeItem(key));
-      
-      console.log("LOG: Limpeza concluída. Reiniciando...");
-    } catch (err) {
-      console.error("LOG: Erro durante limpeza:", err);
-    } finally {
-      setIsLoading(false);
-      // Força reload da página para estado limpo
-      setTimeout(() => {
-        window.location.reload();
-      }, 500);
-    }
-  };
-
   const handleLogin = async (email: string, password?: string) => {
     const user = await login(email, password || '');
     if (user) {
-        console.log("LOG: Login bem sucedido, aguardando listener...");
+        console.log("LOG: Login sucesso!");
         setMainView('dashboard'); 
     } else {
         alert("Email ou senha inválidos.");
@@ -301,11 +245,11 @@ const App: React.FC = () => {
   const handleRegisterPlayer = async (data: Partial<User>): Promise<boolean> => {
     try {
         const newUser = await registerPlayer(data);
-        alert(`Bem-vindo, ${newUser.name}! Seu cadastro foi realizado com sucesso. Faça o login para continuar.`);
+        alert(`Bem-vindo, ${newUser.name}!`);
         return true;
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        alert(`Erro no cadastro: ${errorMessage}`);
+        alert(`Erro: ${errorMessage}`);
         return false;
     }
   }
@@ -313,11 +257,11 @@ const App: React.FC = () => {
   const handleRegisterClub = async (clubData: Partial<Club>, adminData: Partial<User>): Promise<boolean> => {
      try {
         const { club, admin } = await registerClub(clubData, adminData);
-        alert(`Clube ${club.name} cadastrado com sucesso! Faça o login como ${admin.name} para continuar.`);
+        alert(`Clube ${club.name} cadastrado!`);
         return true;
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        alert(`Erro no cadastro: ${errorMessage}`);
+        alert(`Erro: ${errorMessage}`);
         return false;
     }
   }
@@ -329,25 +273,25 @@ const App: React.FC = () => {
   };
 
   const handleAdminTransferSuccess = () => {
-    alert('Administração transferida com sucesso! Você será deslogado.');
+    alert('Administração transferida!');
     handleLogout();
   };
 
   const handleAddToCart = (categoryId: string, eventId: string) => {
     const newCart = addToCart(categoryId, eventId);
     setCartCount(newCart.length);
-    alert('Categoria adicionada ao carrinho!');
+    alert('Adicionado ao carrinho!');
   }
 
   const handleCheckout = async () => {
     if (currentUser) {
         const success = await checkout(currentUser.id);
         if (success) {
-            alert('Pagamento simulado com sucesso! Inscrições confirmadas.');
+            alert('Inscrições confirmadas!');
             setCartCount(0); 
             setModalView('none');
         } else {
-            alert('Ocorreu um erro ao processar suas inscrições.');
+            alert('Erro ao processar.');
         }
     }
   }
@@ -359,9 +303,7 @@ const App: React.FC = () => {
         case 'checkout':
             return <CheckoutPage currentUser={currentUser} onCheckout={handleCheckout} onBack={() => setModalView('none')} />;
         case 'subscription':
-            return <SubscriptionPage onSubscribed={() => {
-                setModalView('none');
-            }} onBack={() => setModalView('none')} />;
+            return <SubscriptionPage onSubscribed={() => setModalView('none')} onBack={() => setModalView('none')} />;
         default:
             return null;
      }
@@ -391,9 +333,7 @@ const App: React.FC = () => {
                     club={managedClub}
                     adminUser={currentUser} 
                     mode="edit" 
-                    onFormClose={() => {
-                        setMainView('dashboard');
-                    }}
+                    onFormClose={() => setMainView('dashboard')}
                     onAdminTransferSuccess={handleAdminTransferSuccess}
                  />;
             }
@@ -405,7 +345,6 @@ const App: React.FC = () => {
   }
 
   if (isLoading) {
-    console.log("LOG: Renderizando: isLoading");
     return (
         <div className="min-h-screen flex items-center justify-center bg-slate-900">
             <SpinnerIcon className="w-6 h-6 text-blue-500"/>
@@ -414,20 +353,14 @@ const App: React.FC = () => {
   }
 
   if (isRecovering) {
-    console.log("LOG: Renderizando: ResetPasswordPage");
     return (
         <div className="min-h-screen flex flex-col bg-slate-900 bg-gradient-to-br from-slate-900 to-slate-800">
           <main className="flex-grow w-full flex items-center justify-center">
             <ResetPasswordPage 
                 onSuccess={() => {
-                    console.log("LOG: Senha redefinida com sucesso. Limpando URL e deslogando...");
-                    
                     if (window.location.pathname === '/reset-password') {
-                        console.log("LOG: Limpando URL /reset-password para /...");
                         window.history.replaceState(null, '', '/'); 
-                        console.log("LOG: URL limpa.");
                     }
-
                     setIsRecovering(false);
                     handleLogout();
                 }}
@@ -438,7 +371,6 @@ const App: React.FC = () => {
   }
 
   if (!session) { 
-      console.log("LOG: Renderizando: AuthPage (sem sessão)");
       return (
          <div className="min-h-screen flex flex-col bg-slate-900 bg-gradient-to-br from-slate-900 to-slate-800">
           <Header user={null} managedClub={null} onLogout={handleLogout} cartCount={0} onCartClick={() => {}} />
@@ -454,7 +386,6 @@ const App: React.FC = () => {
       );
     }
     
-    console.log(`LOG: Renderizando: AppLayout (com sessão, currentUser ${currentUser ? 'carregado' : 'a carregar...'})`); 
     return (
         <div className="min-h-screen flex flex-col bg-slate-900 bg-gradient-to-br from-slate-900 to-slate-800">
             <Header user={currentUser} managedClub={managedClub} onLogout={handleLogout} cartCount={cartCount} onCartClick={() => setModalView('checkout')} />
