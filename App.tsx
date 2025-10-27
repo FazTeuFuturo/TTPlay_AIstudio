@@ -115,34 +115,28 @@ const App: React.FC = () => {
     console.log("LOG: Configurando listener onAuthStateChange...");
 
 
-    // (Linha ~113 do App.tsx)
- // (Linha ~113 do App.tsx)
+// (Linha ~113 do App.tsx)
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
         console.log(`LOG: onAuthStateChange EVENTO: ${event}, Session exists: ${!!session}`);
 
-        // Define isLoading como true APENAS ao iniciar
-        if (event === 'INITIAL_SESSION') {
-             console.log(`LOG: Evento INITIAL_SESSION. Definindo isLoading = true.`);
-             setIsLoading(true);
-        }
+        // Não definimos isLoading=true aqui, tratamos dentro de cada bloco
 
         try {
-            // Prioridade MÁXIMA para PASSWORD_RECOVERY
             if (event === 'PASSWORD_RECOVERY') {
                 console.log("LOG: Modo de Recuperação de Senha ATIVADO.");
                 setIsRecovering(true);
                 setSession(session);
                 setCurrentUser(null);
                 setManagedClub(null);
-                // O finally tratará o isLoading
+                setIsLoading(false); // Define isLoading false AQUI para recuperação
             } else if (event === 'SIGNED_IN') {
                 console.log("LOG: Usuário LOGADO (SIGNED_IN). Processando...");
-                // Se estávamos recuperando, cancela esse modo AGORA
-                if (isRecovering) {
-                    console.log("LOG: Saindo do modo de recuperação devido a SIGNED_IN inesperado.");
-                    setIsRecovering(false);
-                }
-                setSession(session);
+                setIsRecovering(false);
+                setSession(session); // Define a sessão logo
+
+                // Define isLoading false ANTES do async
+                setIsLoading(false);
+                console.log("LOG: isLoading DEFINIDO para false (antes de buscar perfil).");
 
                 if (session) {
                     console.log(`LOG: Tentando buscar perfil para user ID: ${session.user.id}`);
@@ -150,7 +144,8 @@ const App: React.FC = () => {
                     console.log(`LOG: getUserById concluído. User found: ${!!user}`);
 
                     if (user) {
-                        console.log(`LOG: Perfil encontrado: ${user.name}. Configurando estados...`);
+                        console.log(`LOG: Perfil encontrado: ${user.name}. Configurando estado...`);
+                        setCurrentUser(user); // Atualiza o usuário
                         let clubToSet = null;
                         let cartCountToSet = 0;
 
@@ -161,11 +156,13 @@ const App: React.FC = () => {
                             console.log(`LOG: Clube ${clubToSet ? clubToSet.name : 'NÃO'} encontrado.`);
                         }
 
-                        setCurrentUser(user);
+                        // Atualiza estados secundários (clube/carrinho)
+                        // Não precisamos de setSession de novo aqui
                         setManagedClub(clubToSet || null);
                         setCartCount(cartCountToSet);
                         console.log("LOG: Estado do usuário, clube e carrinho configurado.");
 
+                        // Limpeza da URL
                         if (window.location.pathname === '/reset-password') {
                             console.log("LOG: URL atual é /reset-password. Limpando para /...");
                             window.history.replaceState(null, '', '/');
@@ -181,21 +178,25 @@ const App: React.FC = () => {
                 }
             } else if (event === 'SIGNED_OUT') {
                 console.log("LOG: Usuário DESLOGADO (SIGNED_OUT). Limpando estado...");
-                 // Se estávamos recuperando, cancela esse modo AGORA
-                 if (isRecovering) {
-                    console.log("LOG: Saindo do modo de recuperação devido a SIGNED_OUT.");
-                    setIsRecovering(false);
-                }
+                setIsRecovering(false);
                 setSession(null);
                 setCurrentUser(null);
                 setManagedClub(null);
                 setCartCount(0);
+                setIsLoading(false); // Define isLoading false AQUI para logout
+            } else if (event === 'INITIAL_SESSION') {
+                 if (!session) {
+                    console.log("LOG: Sessão inicial nula.");
+                     setIsLoading(false); // Define isLoading false AQUI para sessão inicial nula
+                } else {
+                    console.log("LOG: Sessão inicial encontrada. Aguardando evento SIGNED_IN...");
+                    // Se há sessão inicial, SIGNED_IN será disparado a seguir
+                    // Não definimos isLoading aqui, esperamos o SIGNED_IN tratar
+                }
             }
-            // INITIAL_SESSION só define isLoading=true no início
-            
         } catch (error: any) {
             console.error("LOG: Erro dentro do listener onAuthStateChange:", error.message);
-            setIsRecovering(false); // Garante sair do modo de recuperação em erro
+            setIsRecovering(false);
             setSession(null);
             setCurrentUser(null);
             setManagedClub(null);
@@ -203,11 +204,9 @@ const App: React.FC = () => {
             await supabase.auth.signOut().catch(signOutError => {
                 console.error("LOG: Erro adicional ao tentar deslogar no catch:", signOutError);
             });
-        } finally {
-            // O finally SEMPRE define isLoading = false
-            setIsLoading(false);
-            console.log(`LOG: Listener finalizado para evento ${event}. isLoading DEFINIDO para false.`);
+            setIsLoading(false); // Define isLoading false AQUI em caso de erro
         }
+        // Bloco finally removido
     });
 
     // 3. Limpa o listener ao desmontar
@@ -374,8 +373,8 @@ const App: React.FC = () => {
     );
   }
 
-  if (!session || !currentUser) {
-      console.log("LOG: Renderizando: AuthPage");
+  if (!session) { 
+      console.log("LOG: Renderizando: AuthPage (sem sessão)");
       return (
          <div className="min-h-screen flex flex-col bg-slate-900 bg-gradient-to-br from-slate-900 to-slate-800">
           <Header user={null} managedClub={null} onLogout={handleLogout} cartCount={0} onCartClick={() => {}} />
@@ -391,19 +390,27 @@ const App: React.FC = () => {
       );
     }
     
-    // Logged in view
-    console.log("LOG: Renderizando: AppLayout (Usuário logado)");
+    // Logged in view (agora renderiza mesmo que currentUser ainda seja null)
+    // Os componentes internos (Header, AppLayout, Dashboard, etc.) precisam lidar com currentUser=null
+    console.log(`LOG: Renderizando: AppLayout (com sessão, currentUser ${currentUser ? 'carregado' : 'a carregar...'})`); 
     return (
         <div className="min-h-screen flex flex-col bg-slate-900 bg-gradient-to-br from-slate-900 to-slate-800">
+            {/* Passa currentUser (que pode ser null inicialmente) para os componentes */}
             <Header user={currentUser} managedClub={managedClub} onLogout={handleLogout} cartCount={cartCount} onCartClick={() => setModalView('checkout')} />
-            <AppLayout 
-                user={currentUser}
-                managedClub={managedClub}
-                activeView={mainView}
-                onNavigate={setMainView}
-            >
-                {modalView !== 'none' ? renderModalContent() : renderMainContent()}
-            </AppLayout>
+            {currentUser ? ( // Renderiza AppLayout apenas se currentUser já foi carregado
+               <AppLayout 
+                    user={currentUser} 
+                    managedClub={managedClub}
+                    activeView={mainView}
+                    onNavigate={setMainView}
+                >
+                    {modalView !== 'none' ? renderModalContent() : renderMainContent()}
+                </AppLayout>
+             ) : ( // Mostra um spinner simples enquanto currentUser carrega (opcional, mas bom UX)
+                 <div className="flex-grow flex items-center justify-center">
+                     <SpinnerIcon className="w-12 h-12 text-blue-500"/>
+                 </div>
+             )}
             <Footer />
         </div>
     );
