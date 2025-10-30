@@ -23,7 +23,6 @@ const CategoryForm: React.FC<CategoryFormProps> = ({ eventId, categoryToEdit, on
     const [entryFee, setEntryFee] = useState('0');
     const [startTime, setStartTime] = useState('');
     const [playersPerGroup, setPlayersPerGroup] = useState('4');
-    const [kFactor, setKFactor] = useState('32');
     const [error, setError] = useState('');
 
     useEffect(() => {
@@ -39,7 +38,6 @@ const CategoryForm: React.FC<CategoryFormProps> = ({ eventId, categoryToEdit, on
             setEntryFee(String(categoryToEdit.entryFee));
             setStartTime(categoryToEdit.startTime || '');
             setPlayersPerGroup(String(categoryToEdit.playersPerGroup || '4'));
-            setKFactor(String(categoryToEdit.kFactor || '32'));
         }
     }, [categoryToEdit, isEditMode]);
 
@@ -64,7 +62,6 @@ const CategoryForm: React.FC<CategoryFormProps> = ({ eventId, categoryToEdit, on
         entryFee: parseFloat(entryFee),
         startTime: startTime || undefined,
         playersPerGroup: format === TournamentFormat.GRUPOS_E_ELIMINATORIA ? parseInt(playersPerGroup) : undefined,
-        kFactor: kFactor ? parseInt(kFactor) : 32,
     };
 
     try {
@@ -119,10 +116,6 @@ const CategoryForm: React.FC<CategoryFormProps> = ({ eventId, categoryToEdit, on
                   <input type="number" id="playersPerGroup" value={playersPerGroup} onChange={e => setPlayersPerGroup(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" />
               </div>
             )}
-            <div>
-                <label htmlFor="kFactor" className="block text-sm font-medium text-slate-300 mb-2">Fator K (ELO)</label>
-                <input type="number" id="kFactor" value={kFactor} onChange={e => setKFactor(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" />
-            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

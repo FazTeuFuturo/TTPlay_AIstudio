@@ -69,6 +69,7 @@ const GroupTable: React.FC<{ group: Group; matches: Match[]; players: User[] }> 
 };
 
 export const GroupStageView: React.FC<GroupStageViewProps> = ({ groups, matches, players, onScoreUpdate, tournamentStatus }) => {
+  // Os logs de depuração foram removidos para limpar o console.
   const isEditable = tournamentStatus === TournamentStatus.GROUP_STAGE;
 
   return (

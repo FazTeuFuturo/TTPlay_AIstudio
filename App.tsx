@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User, UserSession, Role, Club } from './types';
-import { initializeDatabase, login, logout, getCurrentUserSession, getUserById, registerPlayer, registerClub, getCart, addToCart, checkout, getClubById, transferClubAdminship, updateUserDetails } from './data-service';
+import { login, logout, getCurrentUserSession, getUserById, registerPlayer, registerClub, getCart, addToCart, checkout, getClubById, transferClubAdminship, updateUserDetails } from './data-service';
 import { PingPongPaddleIcon, ShoppingCartIcon, SpinnerIcon } from './components/Icons';
 import AuthPage from './components/AuthPage';
 import CheckoutPage from './components/CheckoutPage';
@@ -119,7 +119,6 @@ const App: React.FC = () => {
   useEffect(() => {
     const setup = async () => {
       setIsLoading(true);
-      await initializeDatabase();
       await refreshData();
       setIsLoading(false);
     };

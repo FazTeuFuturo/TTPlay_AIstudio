@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { TournamentEvent, TournamentCategory, User, TournamentStatus, TournamentFormat } from '../types';
-import { getTournamentCategories, startCategory, closeRegistration, deleteTournamentCategory, reopenRegistration } from '../data-service';
+import { getTournamentCategories, startCategory, closeRegistration, deleteTournamentCategory, reopenRegistration, addManualPlayerToCategory } from '../data-service';
 import { ArrowLeftIcon, UsersIcon, SpinnerIcon } from './Icons';
 import AddCategoryFlow from './AddCategoryFlow';
 import { CategoryDetails } from './TournamentDetails';
@@ -28,6 +28,127 @@ const formatLabels: Record<TournamentFormat, string> = {
     [TournamentFormat.GRUPOS_E_ELIMINATORIA]: 'Fase de Grupos e Eliminatória',
 };
 
+const AddManualPlayerModal: React.FC<{ category: TournamentCategory, onClose: () => void, onPlayerAdded: () => void }> = ({ category, onClose, onPlayerAdded }) => {
+    const [name, setName] = useState('');
+    const [phone, setPhone] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setIsLoading(true);
+        try {
+            await addManualPlayerToCategory(category.id, name, phone);
+            alert(`Atleta "${name}" adicionado com sucesso!`);
+            onPlayerAdded();
+            onClose();
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            alert(`Erro ao adicionar atleta: ${errorMessage}`);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+            <div className="bg-slate-800 rounded-lg p-6 w-full max-w-md animate-fade-in-up">
+                <h3 className="text-xl font-bold text-white mb-4">Adicionar Atleta Manualmente</h3>
+                <p className="text-sm text-slate-400 mb-6">Insira os dados do atleta. Um perfil leve (sem login) será criado para ele. O rating inicial será 1000.</p>
+                <form onSubmit={handleSubmit} className="space-y-4">
+                    <div>
+                        <label htmlFor="manual-name" className="block text-sm font-medium text-slate-300 mb-2">Nome Completo</label>
+                        <input
+                            type="text"
+                            id="manual-name"
+                            value={name}
+                            onChange={(e) => setName(e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white"
+                            required
+                        />
+                    </div>
+                    <div>
+                        <label htmlFor="manual-phone" className="block text-sm font-medium text-slate-300 mb-2">Telefone (para convite via WhatsApp)</label>
+                        <input
+                            type="tel"
+                            id="manual-phone"
+                            value={phone}
+                            onChange={(e) => setPhone(e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white"
+                            placeholder="(XX) XXXXX-XXXX"
+                        />
+                    </div>
+                    <div className="flex justify-end gap-4 pt-4">
+                        <button type="button" onClick={onClose} className="bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-4 rounded transition-colors">Cancelar</button>
+                        <button type="submit" className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded transition-colors disabled:bg-slate-600 flex items-center justify-center min-w-[100px]" disabled={isLoading}>
+                            {isLoading ? <SpinnerIcon className="w-5 h-5"/> : 'Adicionar'}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+};
+
+const GroupConfigModal: React.FC<{ category: TournamentCategory, onClose: () => void, onConfirm: (config: { playersPerGroup: number, numAdvancing: number }) => Promise<void> }> = ({ category, onClose, onConfirm }) => {
+    const [playersPerGroup, setPlayersPerGroup] = useState(category.playersPerGroup || 4);
+    const [numAdvancing, setNumAdvancing] = useState(2);
+    const [isLoading, setIsLoading] = useState(false);
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        
+        if (playersPerGroup < 2) {
+            alert("Deve haver pelo menos 2 jogadores por grupo.");
+            return;
+        }
+        if (numAdvancing < 1 || numAdvancing >= playersPerGroup) {
+            alert("O número de jogadores que avançam deve ser maior que 0 e menor que o total de jogadores no grupo.");
+            return;
+        }
+        setIsLoading(true);
+        await onConfirm({ playersPerGroup, numAdvancing });
+        setIsLoading(false);
+    };
+    
+    return (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+            <div className="bg-slate-800 rounded-lg p-6 w-full max-w-md animate-fade-in-up">
+                <h3 className="text-xl font-bold text-white mb-4">Configurar Fase de Grupos</h3>
+                <p className="text-sm text-slate-400 mb-6">Defina as regras para os grupos antes de iniciar a competição.</p>
+                <form onSubmit={handleSubmit} className="space-y-4">
+                    <div>
+                        <label htmlFor="playersPerGroup" className="block text-sm font-medium text-slate-300 mb-2">Jogadores por Grupo</label>
+                        <input
+                            type="number"
+                            id="playersPerGroup"
+                            value={playersPerGroup}
+                            onChange={(e) => setPlayersPerGroup(Number(e.target.value))}
+                            className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white"
+                            required min="2"
+                        />
+                    </div>
+                    <div>
+                         <label htmlFor="numAdvancing" className="block text-sm font-medium text-slate-300 mb-2">Quantos Avançam por Grupo</label>
+                        <input
+                            type="number"
+                            id="numAdvancing"
+                            value={numAdvancing}
+                            onChange={(e) => setNumAdvancing(Number(e.target.value))}
+                            className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white"
+                            required min="1"
+                        />
+                    </div>
+                    <div className="flex justify-end gap-4 pt-4">
+                        <button type="button" onClick={onClose} className="bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-4 rounded transition-colors">Cancelar</button>
+                        <button type="submit" className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded transition-colors disabled:bg-slate-600 flex items-center justify-center min-w-[150px]" disabled={isLoading}>
+                            {isLoading ? <SpinnerIcon className="w-5 h-5"/> : 'Confirmar e Iniciar'}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+}
 
 export const ManageEvent: React.FC<ManageEventProps> = ({ event, onBack, onDataUpdate }) => {
     const [currentEvent, setCurrentEvent] = useState<TournamentEvent>(event);
@@ -35,6 +156,8 @@ export const ManageEvent: React.FC<ManageEventProps> = ({ event, onBack, onDataU
     const [view, setView] = useState<'list' | 'add_category' | 'view_category' | 'edit_event' | 'edit_category'>('list');
     const [selectedCategory, setSelectedCategory] = useState<TournamentCategory | null>(null);
     const [loadingCategoryId, setLoadingCategoryId] = useState<string | null>(null);
+    const [showManualAddModal, setShowManualAddModal] = useState(false);
+    const [showGroupConfigModal, setShowGroupConfigModal] = useState(false);
 
     const fetchData = async () => {
         setCategories(await getTournamentCategories(currentEvent.id));
@@ -74,15 +197,38 @@ export const ManageEvent: React.FC<ManageEventProps> = ({ event, onBack, onDataU
         }
     }
 
-    const handleGenerateBrackets = async (categoryId: string) => {
-        setLoadingCategoryId(categoryId);
+    const handleStartCategory = async (category: TournamentCategory) => {
+        if (category.format === TournamentFormat.GRUPOS_E_ELIMINATORIA) {
+            setSelectedCategory(category);
+            setShowGroupConfigModal(true);
+        } else {
+            setLoadingCategoryId(category.id);
+            try {
+                const updatedCategory = await startCategory(category.id);
+                alert("Grupos e chave gerados com sucesso! A competição começou.");
+                setSelectedCategory(updatedCategory);
+                setView('view_category');
+            } catch (error) {
+                console.error(error);
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                alert(`Erro ao gerar chaves: ${errorMessage}`);
+            } finally {
+                setLoadingCategoryId(null);
+            }
+        }
+    };
+
+    const handleStartCategoryWithGroups = async (config: { playersPerGroup: number, numAdvancing: number }) => {
+        if (!selectedCategory) return;
+        setLoadingCategoryId(selectedCategory.id);
+        setShowGroupConfigModal(false);
         try {
-            await startCategory(categoryId);
+            const updatedCategory = await startCategory(selectedCategory.id, config);
             alert("Grupos e chave gerados com sucesso! A competição começou.");
-            await fetchData();
-            onDataUpdate();
+            setSelectedCategory(updatedCategory);
+            setView('view_category');
         } catch (error) {
-            console.error(error); // Log the full error for better debugging
+            console.error(error);
             const errorMessage = error instanceof Error ? error.message : String(error);
             alert(`Erro ao gerar chaves: ${errorMessage}`);
         } finally {
@@ -158,14 +304,23 @@ export const ManageEvent: React.FC<ManageEventProps> = ({ event, onBack, onDataU
         const isLoading = loadingCategoryId === category.id;
         
         if (category.status === TournamentStatus.REGISTRATION) {
-            return (
-                <button
-                    onClick={() => handleCloseRegistration(category.id)}
-                    className="bg-yellow-600 hover:bg-yellow-500 text-white font-bold py-1 px-3 rounded text-sm transition-colors disabled:bg-slate-600 disabled:cursor-not-allowed min-w-[150px] flex justify-center items-center"
-                    disabled={isLoading}
-                >
-                    {isLoading ? <SpinnerIcon className="w-4 h-4"/> : 'Encerrar Inscrições'}
-                </button>
+             return (
+                <div className="flex flex-col sm:flex-row gap-2">
+                    <button
+                        onClick={() => { setSelectedCategory(category); setShowManualAddModal(true);}}
+                        className="bg-teal-600/50 hover:bg-teal-600/80 text-teal-200 font-bold py-1 px-3 rounded text-sm transition-colors"
+                        title="Adicionar atleta manualmente"
+                    >
+                        + Atleta
+                    </button>
+                    <button
+                        onClick={() => handleCloseRegistration(category.id)}
+                        className="bg-yellow-600 hover:bg-yellow-500 text-white font-bold py-1 px-3 rounded text-sm transition-colors disabled:bg-slate-600 disabled:cursor-not-allowed min-w-[150px] flex justify-center items-center"
+                        disabled={isLoading}
+                    >
+                        {isLoading ? <SpinnerIcon className="w-4 h-4"/> : 'Encerrar Inscrições'}
+                    </button>
+                </div>
             )
         }
         if (category.status === TournamentStatus.REGISTRATION_CLOSED) {
@@ -179,11 +334,13 @@ export const ManageEvent: React.FC<ManageEventProps> = ({ event, onBack, onDataU
                         {isLoading ? <SpinnerIcon className="w-4 h-4"/> : 'Reabrir'}
                     </button>
                     <button
-                        onClick={() => handleGenerateBrackets(category.id)}
-                        className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-1 px-3 rounded text-sm transition-colors disabled:bg-slate-600 disabled:cursor-not-allowed min-w-[150px] flex justify-center items-center"
-                        disabled={category.registrations.length < 2 || isLoading}
+                        onClick={() => {
+                            setSelectedCategory(category);
+                            setView('view_category');
+                        }}
+                        className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-1 px-3 rounded text-sm transition-colors"
                     >
-                        {isLoading ? <SpinnerIcon className="w-4 h-4"/> : 'Gerar Grupos e Chave'}
+                        Administrar
                     </button>
                 </div>
             )
@@ -193,6 +350,26 @@ export const ManageEvent: React.FC<ManageEventProps> = ({ event, onBack, onDataU
 
     return (
         <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-fade-in">
+            {showManualAddModal && selectedCategory && (
+                <AddManualPlayerModal 
+                    category={selectedCategory} 
+                    onClose={() => {
+                        setShowManualAddModal(false);
+                        setSelectedCategory(null);
+                    }}
+                    onPlayerAdded={fetchData}
+                />
+            )}
+             {showGroupConfigModal && selectedCategory && (
+                <GroupConfigModal 
+                    category={selectedCategory}
+                    onClose={() => {
+                        setShowGroupConfigModal(false);
+                        setSelectedCategory(null);
+                    }}
+                    onConfirm={handleStartCategoryWithGroups}
+                />
+             )}
              <button onClick={onBack} className="flex items-center gap-2 text-blue-400 hover:text-blue-300 transition-colors mb-6">
                 <ArrowLeftIcon className="w-5 h-5"/>
                 Voltar para Eventos

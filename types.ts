@@ -23,6 +23,7 @@ export interface User {
   bio?: string;
   city?: string;
   phone?: string;
+  isTestUser?: boolean;
 }
 
 export enum SubscriptionPlan {
@@ -71,6 +72,7 @@ export enum TournamentStatus {
   REGISTRATION = 'REGISTRATION',
   REGISTRATION_CLOSED = 'REGISTRATION_CLOSED', // New status
   GROUP_STAGE = 'GROUP_STAGE',
+  KNOCKOUT_PENDING = 'KNOCKOUT_PENDING',
   IN_PROGRESS = 'IN_PROGRESS', // Knockout stage
   COMPLETED = 'COMPLETED',
 }
@@ -86,6 +88,7 @@ export interface PlayerRegistration {
   status: RegistrationStatus;
   registeredAt: string;
 }
+
 
 export interface TournamentCategory {
   id: string;
@@ -103,7 +106,8 @@ export interface TournamentCategory {
   registrations: PlayerRegistration[];
   startTime?: string; // e.g., "14:30"
   playersPerGroup?: number;
-  kFactor?: number; // ELO sensitivity factor
+  numAdvancingFromGroup?: number;
+  kFactor?: number;
 }
 
 export interface Match {

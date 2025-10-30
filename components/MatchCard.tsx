@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Match, User } from '../types';
+import { PencilIcon } from './Icons';
 
 interface MatchCardProps {
   match: Match;
@@ -86,11 +87,21 @@ export const MatchCard: React.FC<MatchCardProps> = ({ match, players, onScoreUpd
       <div className="text-center text-xs text-slate-500 font-mono">VS</div>
       <PlayerDisplay playerId={match.player2Id} players={players} score={match.player2Score} isWinner={match.winnerId === match.player2Id} />
       
-      {isCompleted && match.setScores && (
-         <div className="text-center text-xs text-slate-400 font-mono mt-1">
-            {match.setScores.map(s => `${s.p1}-${s.p2}`).join(' / ')}
-        </div>
-      )}
+      <div className="flex items-center justify-center gap-2 mt-1">
+        {isCompleted && match.setScores && (
+          <div className="text-center text-xs text-slate-400 font-mono">
+              {match.setScores.map(s => `${s.p1}-${s.p2}`).join(' / ')}
+          </div>
+        )}
+        {isEditable && isCompleted && !isEditing && (
+            <button onClick={() => {
+                setIsEditing(true);
+                setSetScores(Array(5).fill({p1: -1, p2: -1}));
+            }} className="text-blue-400 hover:text-blue-300">
+                <PencilIcon className="w-3 h-3" />
+            </button>
+        )}
+      </div>
 
       {isEditable && !isCompleted && match.player1Id && match.player2Id && !isEditing && (
         <button 

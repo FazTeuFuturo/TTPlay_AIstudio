@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { TournamentCategory, Match, User, Group, TournamentStatus, TournamentFormat } from '../types';
-import { getMatches, getUsers, getGroups, updateMatchResultAndAdvance } from '../data-service';
+// FIX: Import `getCategoryById` to fetch the latest category data.
+import { getMatches, getUsers, getGroups, updateMatchResultAndAdvance, drawGroupsAndGenerateMatches, getCategoryById, generateKnockoutStage, finalizeGroupStage } from '../data-service';
 import { Bracket } from './Bracket';
 import { GroupStageView } from './GroupStageView';
-import { UsersIcon, PingPongPaddleIcon, ArrowLeftIcon } from './Icons';
+import { GroupManager } from './GroupManager';
+import { UsersIcon, PingPongPaddleIcon, ArrowLeftIcon, SpinnerIcon, SettingsIcon } from './Icons';
 
 interface CategoryDetailsProps {
   category: TournamentCategory;
@@ -18,111 +20,528 @@ const formatLabels: Record<TournamentFormat, string> = {
     [TournamentFormat.GRUPOS_E_ELIMINATORIA]: 'Fase de Grupos e Eliminatória',
 };
 
+const GroupConfigModal: React.FC<{ category: TournamentCategory, onClose: () => void, onConfirm: (config: { playersPerGroup: number, numAdvancing: number }) => Promise<void> }> = ({ category, onClose, onConfirm }) => {
+    const [playersPerGroup, setPlayersPerGroup] = useState(category.playersPerGroup || 4);
+    const [numAdvancing, setNumAdvancing] = useState(category.numAdvancingFromGroup || 2);
+    const [isLoading, setIsLoading] = useState(false);
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        
+        if (playersPerGroup < 2) {
+            alert("Deve haver pelo menos 2 jogadores por grupo.");
+            return;
+        }
+        if (numAdvancing < 1 || numAdvancing >= playersPerGroup) {
+            alert("O número de jogadores que avançam deve ser maior que 0 e menor que o total de jogadores no grupo.");
+            return;
+        }
+        setIsLoading(true);
+        await onConfirm({ playersPerGroup, numAdvancing });
+        setIsLoading(false);
+    };
+    
+    return (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+            <div className="bg-slate-800 rounded-lg p-6 w-full max-w-md animate-fade-in-up border border-slate-700 shadow-xl">
+                <h3 className="text-xl font-bold text-white mb-4">Configurar Fase de Grupos</h3>
+                <p className="text-sm text-slate-400 mb-6">Defina as regras para os grupos antes de iniciar a competição.</p>
+                <form onSubmit={handleSubmit} className="space-y-4">
+                    <div>
+                        <label htmlFor="playersPerGroup" className="block text-sm font-medium text-slate-300 mb-2">Jogadores por Grupo</label>
+                        <input
+                            type="number"
+                            id="playersPerGroup"
+                            value={playersPerGroup}
+                            onChange={(e) => setPlayersPerGroup(Number(e.target.value))}
+                            className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white"
+                            required min="2"
+                        />
+                    </div>
+                    <div>
+                         <label htmlFor="numAdvancing" className="block text-sm font-medium text-slate-300 mb-2">Quantos Avançam por Grupo</label>
+                        <input
+                            type="number"
+                            id="numAdvancing"
+                            value={numAdvancing}
+                            onChange={(e) => setNumAdvancing(Number(e.target.value))}
+                            className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white"
+                            required min="1"
+                        />
+                    </div>
+                    <div className="flex justify-end gap-4 pt-4">
+                        <button type="button" onClick={onClose} className="bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-4 rounded transition-colors">Cancelar</button>
+                        <button type="submit" className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded transition-colors disabled:bg-slate-600 flex items-center justify-center min-w-[150px]" disabled={isLoading}>
+                            {isLoading ? <SpinnerIcon className="w-5 h-5"/> : 'Confirmar e Iniciar'}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+}
+
 export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBack, onDataUpdate }) => {
+  console.log('[DEBUG-INIT] Valores das enums:', {
+    TournamentFormat: {
+      GRUPOS_E_ELIMINATORIA: TournamentFormat.GRUPOS_E_ELIMINATORIA,
+      rawValue: 'GRUPOS_E_ELIMINATORIA'
+    },
+    TournamentStatus: {
+      GROUP_STAGE: TournamentStatus.GROUP_STAGE,
+      rawValue: 'GROUP_STAGE'
+    }
+  });
+
+  // Estados principais
   const [matches, setMatches] = useState<Match[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [knockoutMatches, setKnockoutMatches] = useState<Match[]>([]);
+  const [groupMatches, setGroupMatches] = useState<Match[]>([]);
+  const [isLoadingData, setIsLoadingData] = useState(true);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [currentCategory, setCurrentCategory] = useState<TournamentCategory>(category);
-  const [activeTab, setActiveTab] = useState<'groups' | 'bracket'>(
-    category.status === TournamentStatus.GROUP_STAGE ? 'groups' : 'bracket'
+  const [showGroupConfigModal, setShowGroupConfigModal] = useState(false);
+  const [showGroupManager, setShowGroupManager] = useState(false);
+  const [allGroupMatchesCompleted, setAllGroupMatchesCompleted] = useState(false);
+  const [activeTab, setActiveTab] = useState<'registrations' | 'groups' | 'bracket'>(
+    'registrations'
   );
 
-  // FIX: Made function async and awaited data fetching calls to pass data, not promises, to state setters.
   const fetchData = async () => {
-    setMatches(await getMatches(currentCategory.id));
-    setUsers(await getUsers());
-    if (currentCategory.format === TournamentFormat.GRUPOS_E_ELIMINATORIA) {
-      setGroups(await getGroups(currentCategory.id));
+    console.log('[DEBUG-FETCH] Iniciando fetchData...');
+    setIsLoadingData(true);
+    try {
+      // Buscar categoria e dados básicos
+      const cat = await getCategoryById(currentCategory.id) || currentCategory;
+      console.log('[DEBUG-FETCH] Categoria carregada:', {
+        id: cat.id,
+        format: cat.format,
+        status: cat.status
+      });
+      setCurrentCategory(cat);
+      
+      // Buscar todas as partidas
+      const allMatches = await getMatches(cat.id);
+      console.log('Categoria carregada:', {
+        id: cat.id,
+        nome: cat.name,
+        formato: cat.format,
+        formatoEsperado: TournamentFormat.GRUPOS_E_ELIMINATORIA,
+        status: cat.status,
+        partidasTotal: allMatches.length,
+        isFormatsEqual: cat.format === TournamentFormat.GRUPOS_E_ELIMINATORIA,
+        isFormatsTypeEqual: typeof cat.format === typeof TournamentFormat.GRUPOS_E_ELIMINATORIA,
+      });
+      
+      setMatches(allMatches);
+      
+      // Separar partidas por tipo e verificar status
+      const filteredGroupMatches = allMatches.filter(m => m.stage === 'GROUP');
+      const filteredKnockoutMatches = allMatches.filter(m => m.stage === 'KNOCKOUT');
+      
+      setGroupMatches(filteredGroupMatches);
+      setKnockoutMatches(filteredKnockoutMatches);
+      
+      // Adicionar verificação detalhada das partidas
+      console.log('[DEBUG-MATCHES] Análise detalhada das partidas:', {
+        todas: {
+          total: allMatches.length,
+          porStage: allMatches.map(m => ({ id: m.id, stage: m.stage, status: m.status }))
+        },
+        grupos: {
+          total: groupMatches.length,
+          matches: groupMatches.map(m => ({ id: m.id, status: m.status })),
+          completas: groupMatches.filter(m => m.status === 'COMPLETED').length
+        },
+        knockout: {
+          total: knockoutMatches.length,
+          matches: knockoutMatches.map(m => ({ id: m.id, status: m.status }))
+        }
+      });
+      
+      console.log('[DEBUG] ========== CATEGORIA ==========');
+      console.log('Detalhes da Categoria:', {
+        id: cat.id,
+        nome: cat.name,
+        formato: cat.format,
+        status: cat.status,
+      });
+      
+      console.log('Estado das Partidas:', {
+        total: {
+          todas: allMatches.length,
+          grupos: groupMatches.length,
+          knockout: knockoutMatches.length
+        },
+        grupos: {
+          total: groupMatches.length,
+          completas: groupMatches.filter(m => m.status === 'COMPLETED').length,
+          todasCompletas: groupMatches.length > 0 && groupMatches.every(m => m.status === 'COMPLETED')
+        },
+        deveExibirBotao: cat.format === TournamentFormat.GRUPOS_E_ELIMINATORIA && 
+                         groupMatches.length > 0 && 
+                         groupMatches.every(m => m.status === 'COMPLETED') &&
+                         knockoutMatches.length === 0
+      });
+      console.log('==========================================');
+      
+      console.log('Análise das partidas:', {
+        total: allMatches.length,
+        grupos: {
+          total: groupMatches.length,
+          completas: groupMatches.filter(m => m.status === 'COMPLETED').length,
+          status: groupMatches.map(m => m.status)
+        },
+        knockout: {
+          total: knockoutMatches.length
+        }
+      });
+      
+      // Verificar se todas as partidas dos grupos estão completas
+      const hasGroupMatches = groupMatches.length > 0;
+      const allCompleted = hasGroupMatches && groupMatches.every(m => m.status === 'COMPLETED');
+      const hasKnockout = knockoutMatches.length > 0;
+      
+      console.log('Estado do torneio:', {
+        hasGroupMatches,
+        allCompleted,
+        hasKnockout,
+        format: cat.format,
+        isFormatCorrect: cat.format === TournamentFormat.GRUPOS_E_ELIMINATORIA
+      });
+      
+      // Atualizar estado que controla visibilidade do botão
+      const shouldShowButton = cat.format === TournamentFormat.GRUPOS_E_ELIMINATORIA && allCompleted && !hasKnockout;
+      console.log('Deve mostrar botão?', shouldShowButton);
+      setAllGroupMatchesCompleted(shouldShowButton);
+      
+      // Buscar outros dados necessários
+      setUsers(await getUsers());
+      if (cat.format === TournamentFormat.GRUPOS_E_ELIMINATORIA || cat.status === TournamentStatus.GROUP_STAGE) {
+        setGroups(await getGroups(cat.id));
+      }
+
+      // Definir aba ativa com base no estado atual
+      if (hasKnockout) {
+        setActiveTab('bracket');
+      } else if (hasGroupMatches) {
+        setActiveTab('groups');
+      } else if (cat.status === TournamentStatus.REGISTRATION_CLOSED) {
+        setActiveTab('registrations');
+      }
+    } catch (error) {
+      console.error('Erro ao carregar dados:', error);
+    } finally {
+      setIsLoadingData(false);
     }
   };
 
   useEffect(() => {
+    console.log('[DEBUG-LIFECYCLE] CategoryDetails montado:', {
+      category: {
+        id: category.id,
+        format: category.format,
+        status: category.status
+      }
+    });
     fetchData();
-     // Set initial/updated tab based on status
-     if (currentCategory.status === TournamentStatus.GROUP_STAGE) {
-      setActiveTab('groups');
-    } else if (currentCategory.status === TournamentStatus.IN_PROGRESS || currentCategory.status === TournamentStatus.COMPLETED) {
-      setActiveTab('bracket');
-    }
-  }, [currentCategory]);
 
-  // FIX: Made function async and awaited the result of updateMatchResultAndAdvance.
+    // DEBUG: Monitorar mudanças de estado
+    const interval = setInterval(() => {
+      console.log('[DEBUG-STATE] Estado atual:', {
+        activeTab,
+        format: currentCategory.format,
+        status: currentCategory.status,
+        matches: {
+          group: groupMatches.length,
+          completed: groupMatches.filter(m => m.status === 'COMPLETED').length,
+          knockout: knockoutMatches.length
+        }
+      });
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [category.id]);
+
   const handleScoreUpdate = async (matchId: string, setScores: { p1: number, p2: number }[]) => {
-    const updatedCategory = await updateMatchResultAndAdvance(currentCategory.id, matchId, setScores);
-    if (updatedCategory) {
-        setCurrentCategory(updatedCategory);
+    console.log('Atualizando placar da partida:', matchId, setScores);
+    try {
+      const updatedCategory = await updateMatchResultAndAdvance(currentCategory.id, matchId, setScores);
+      console.log('Categoria atualizada:', updatedCategory);
+      if (updatedCategory) {
+        await fetchData(); // Refetch all data to ensure consistency
         onDataUpdate(); // Notify parent to refresh all data if needed
+        console.log('Dados recarregados com sucesso');
+      }
+    } catch (error) {
+      console.error('Erro ao atualizar placar:', error);
+      alert('Erro ao salvar placar: ' + (error instanceof Error ? error.message : String(error)));
     }
   };
 
-  const knockoutMatches = matches.filter(m => m.stage === 'KNOCKOUT');
-  const groupMatches = matches.filter(m => m.stage === 'GROUP');
+  const handleConfirmDrawGroups = async (config: { playersPerGroup: number, numAdvancing: number }) => {
+    setIsProcessing(true);
+    try {
+        const updatedCategory = await drawGroupsAndGenerateMatches(currentCategory.id, config);
+        alert("Grupos sorteados e partidas geradas com sucesso!");
+        await fetchData(); // Refetch all data
+        onDataUpdate();
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        alert(`Erro ao gerar grupos: ${errorMessage}`);
+    } finally {
+        setShowGroupConfigModal(false);
+        setIsProcessing(false);
+    }
+  };
+
+  const handleGenerateKnockoutStage = async () => {
+    setIsProcessing(true);
+    try {
+        const updatedCategory = await generateKnockoutStage(currentCategory.id);
+        alert("Chaves da fase eliminatória geradas com sucesso!");
+        await fetchData(); // Refetch all data
+        onDataUpdate();
+        setActiveTab('bracket'); // Muda para a aba de chaves
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        alert(`Erro ao gerar chaves: ${errorMessage}`);
+    } finally {
+        setIsProcessing(false);
+    }
+  };
+
+  const handleFinalizeGroupStage = async () => {
+    setIsProcessing(true);
+    try {
+        await finalizeGroupStage(currentCategory.id);
+        alert("Fase de grupos finalizada com sucesso!");
+        await fetchData();
+        onDataUpdate();
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        alert(`Erro ao finalizar fase de grupos: ${errorMessage}`);
+    } finally {
+        setIsProcessing(false);
+    }
+  };
+
+  const registeredUsers = users.filter(user => currentCategory.registrations.some(reg => reg.userId === user.id))
+      .sort((a, b) => b.currentRating - a.currentRating);
+
 
   const renderContent = () => {
-    if (currentCategory.status === TournamentStatus.REGISTRATION || currentCategory.status === TournamentStatus.REGISTRATION_CLOSED) {
-       return (
-        <div className="text-center py-16 bg-slate-800/30 rounded-lg">
-            <h2 className="text-2xl font-bold text-slate-300">Aguardando Início da Categoria</h2>
-            <p className="text-slate-500 mt-2">Os grupos e o chaveamento serão gerados assim que o administrador iniciar a competição.</p>
-        </div>
-       )
+    if (showGroupManager) {
+      return (
+        <GroupManager
+          category={currentCategory}
+          groups={groups}
+          onBack={() => setShowGroupManager(false)}
+          onDataUpdate={async () => {
+            await fetchData();
+            onDataUpdate();
+          }}
+        />
+      );
     }
 
-    const showTabs = currentCategory.format === TournamentFormat.GRUPOS_E_ELIMINATORIA && groups.length > 0;
-    
+    if (currentCategory.status === TournamentStatus.REGISTRATION) {
+      return (
+        <div className="text-center py-16 bg-slate-800/30 rounded-lg">
+          <h2 className="text-2xl font-bold text-slate-300">Aguardando Encerramento das Inscrições</h2>
+          <p className="text-slate-500 mt-2">A área de administração da categoria ficará disponível assim que as inscrições forem encerradas.</p>
+        </div>
+      )
+    }
+
+    const renderRegistrations = () => (
+      <div className="bg-slate-800/30 rounded-lg p-6">
+        <div className="flex flex-col md:flex-row justify-between md:items-center gap-4 mb-6">
+          <div>
+            <h2 className="text-2xl font-bold text-slate-300">Inscrições Encerradas</h2>
+            <p className="text-slate-500 mt-1">{currentCategory.registrations.length} atletas inscritos. Pronto para começar?</p>
+          </div>
+          {currentCategory.status === TournamentStatus.REGISTRATION_CLOSED && (
+            <button
+              onClick={() => setShowGroupConfigModal(true)}
+              className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-6 rounded transition-colors disabled:bg-slate-600 flex items-center justify-center min-w-[280px]"
+              disabled={isProcessing || currentCategory.registrations.length < 2}
+            >
+              {isProcessing ? <SpinnerIcon className="w-5 h-5" /> : 'Sortear Grupos e Gerar Partidas'}
+            </button>
+          )}
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-700">
+            <thead className="bg-slate-800">
+              <tr>
+                <th scope="col" className="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-white sm:pl-6">#</th>
+                <th scope="col" className="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-white">Atleta</th>
+                <th scope="col" className="px-3 py-3.5 text-center text-sm font-semibold text-white">Rating</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800 bg-slate-900/50">
+              {isLoadingData ? (
+                <tr><td colSpan={3} className="text-center py-8 text-slate-400"><SpinnerIcon className="w-6 h-6 mx-auto" /></td></tr>
+              ) : registeredUsers.map((user, index) => (
+                <tr key={user.id}>
+                  <td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm sm:pl-6 text-slate-400">{index + 1}</td>
+                  <td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm">
+                    <div className="flex items-center">
+                      <div className="h-10 w-10 flex-shrink-0">
+                        <img className="h-10 w-10 rounded-full object-cover" src={user.avatar} alt={user.name} />
+                      </div>
+                      <div className="ml-4">
+                        <div className="font-medium text-white">{user.name}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-4 text-sm text-slate-300 text-center font-bold">{user.currentRating}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+
+    const renderGroups = () => {
+      if (isLoadingData) return <SpinnerIcon className="w-8 h-8 mx-auto text-blue-500" />;
+      if (groups.length === 0) {
+        return (
+          <div className="text-center py-16 bg-slate-800/30 rounded-lg">
+            <h2 className="text-2xl font-bold text-slate-300">Grupos não gerados</h2>
+            <p className="text-slate-500 mt-2">Vá para a aba "Inscritos" para iniciar a competição.</p>
+          </div>
+        );
+      }
+
+      const allGroupMatchesCompleted = groupMatches.length > 0 && groupMatches.every(m => m.status === 'COMPLETED');
+      const showFinalizeButton = allGroupMatchesCompleted && currentCategory.status === TournamentStatus.GROUP_STAGE;
+      const showGenerateKnockoutButton = currentCategory.status === TournamentStatus.KNOCKOUT_PENDING;
+
+      return (
+        <div>
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-2xl font-bold text-slate-300">Fase de Grupos</h2>
+            <div className="flex gap-3">
+              {showFinalizeButton && (
+                  <button
+                      onClick={handleFinalizeGroupStage}
+                      disabled={isProcessing}
+                      className="bg-yellow-500 hover:bg-yellow-400 text-black font-bold py-2 px-4 rounded text-sm transition-colors flex items-center gap-2"
+                  >
+                      {isProcessing ? <><SpinnerIcon className="w-4 h-4" />Finalizando...</> : 'Finalizar Fase de Grupos'}
+                  </button>
+              )}
+              {showGenerateKnockoutButton && (
+                <button
+                  onClick={handleGenerateKnockoutStage}
+                  disabled={isProcessing}
+                  className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded text-sm transition-colors flex items-center gap-2"
+                >
+                  {isProcessing ? <><SpinnerIcon className="w-4 h-4" />Gerando...</> : 'Gerar Chaves da Eliminatória'}
+                </button>
+              )}
+              {currentCategory.status === TournamentStatus.GROUP_STAGE && (
+                <button
+                  onClick={() => setShowGroupManager(true)}
+                  className="bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-4 rounded text-sm transition-colors flex items-center gap-2"
+                >
+                  <SettingsIcon className="w-4 h-4" />
+                  Gerenciar Grupos
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="space-y-6">
+            <GroupStageView
+              groups={groups}
+              matches={groupMatches}
+              players={users}
+              onScoreUpdate={handleScoreUpdate}
+              tournamentStatus={currentCategory.status}
+            />
+          </div>
+        </div>
+      );
+    };
+
+    const renderBracket = () => {
+      if (isLoadingData) return <SpinnerIcon className="w-8 h-8 mx-auto text-blue-500" />;
+      if (knockoutMatches.length > 0) {
+        return <Bracket matches={knockoutMatches} players={users} onScoreUpdate={handleScoreUpdate} tournamentStatus={currentCategory.status} />;
+      }
+
+      const canGenerateKnockout = currentCategory.status === TournamentStatus.KNOCKOUT_PENDING;
+
+      return (
+        <div className="text-center py-16 bg-slate-800/30 rounded-lg">
+          <h2 className="text-2xl font-bold text-slate-300">
+            {canGenerateKnockout ? "Pronto para Gerar Chaveamento" : "Chaveamento Indisponível"}
+          </h2>
+          <p className="text-slate-500 mt-2">
+            {canGenerateKnockout ? (
+              <button
+                onClick={handleGenerateKnockoutStage}
+                disabled={isProcessing}
+                className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded text-base transition-colors flex items-center gap-2 mx-auto mt-4"
+              >
+                {isProcessing ? <><SpinnerIcon className="w-4 h-4" />Gerando Chaveamento...</> : 'Gerar Chaveamento da Eliminatória'}
+              </button>
+            ) : (
+              "A fase eliminatória ainda não começou. Finalize a fase de grupos para habilitar esta etapa."
+            )}
+          </p>
+        </div>
+      );
+    };
+
     return (
       <>
-        {showTabs && (
-          <div className="mb-6 border-b border-slate-700">
-            <nav className="-mb-px flex space-x-8" aria-label="Tabs">
-              <button
-                onClick={() => setActiveTab('groups')}
-                className={`${
-                  activeTab === 'groups'
-                    ? 'border-blue-500 text-blue-400'
-                    : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-500'
-                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors`}
-              >
-                Fase de Grupos
-              </button>
-              <button
-                onClick={() => setActiveTab('bracket')}
-                className={`${
-                  activeTab === 'bracket'
-                    ? 'border-blue-500 text-blue-400'
-                    : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-500'
-                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors`}
-              >
-                Fase Eliminatória
-              </button>
-            </nav>
-          </div>
-        )}
-        
-        {(activeTab === 'groups' && showTabs) ? (
-          <GroupStageView 
-            groups={groups} 
-            matches={groupMatches} 
-            players={users} 
-            onScoreUpdate={handleScoreUpdate}
-            tournamentStatus={currentCategory.status}
-          />
-        ) : (
-          knockoutMatches.length > 0 ? (
-            <Bracket matches={knockoutMatches} players={users} onScoreUpdate={handleScoreUpdate} tournamentStatus={currentCategory.status} />
-          ) : (
-            <div className="text-center py-16 bg-slate-800/30 rounded-lg">
-                <h2 className="text-2xl font-bold text-slate-300">Chaveamento Indisponível</h2>
-                <p className="text-slate-500 mt-2">A fase eliminatória ainda não começou ou não há dados para esta categoria.</p>
-            </div>
-          )
-        )}
+        <div className="mb-6 border-b border-slate-700">
+          <nav className="-mb-px flex space-x-8" aria-label="Tabs">
+            <button
+              onClick={() => setActiveTab('registrations')}
+              className={`${activeTab === 'registrations' ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-500'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors`}
+            >
+              Inscritos
+            </button>
+            <button
+              onClick={() => setActiveTab('groups')}
+              disabled={currentCategory.status === TournamentStatus.REGISTRATION}
+              className={`${activeTab === 'groups' ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-500'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors disabled:cursor-not-allowed disabled:text-slate-600`}
+            >
+              Fase de Grupos
+            </button>
+            <button
+              onClick={() => setActiveTab('bracket')}
+              disabled={currentCategory.status === TournamentStatus.REGISTRATION}
+              className={`${activeTab === 'bracket' ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-500'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors disabled:cursor-not-allowed disabled:text-slate-600`}
+            >
+              Fase Eliminatória
+            </button>
+          </nav>
+        </div>
+
+        {activeTab === 'registrations' && renderRegistrations()}
+        {activeTab === 'groups' && renderGroups()}
+        {activeTab === 'bracket' && renderBracket()}
       </>
-    )
-  }
+    );
+  };
 
   return (
     <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-fade-in">
+       {showGroupConfigModal && (
+        <GroupConfigModal 
+            category={currentCategory}
+            onClose={() => setShowGroupConfigModal(false)}
+            onConfirm={handleConfirmDrawGroups}
+        />
+        )}
       <button onClick={onBack} className="flex items-center gap-2 text-blue-400 hover:text-blue-300 transition-colors mb-6">
         <ArrowLeftIcon className="w-5 h-5"/>
         Voltar

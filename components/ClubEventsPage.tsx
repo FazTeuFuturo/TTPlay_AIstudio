@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Club, TournamentEvent, User, SubscriptionPlan } from '../types';
-import { getClubByAdminId, getTournamentEvents, deleteTournamentEvent } from '../data-service';
+import { getClubByAdminId, getTournamentEvents, deleteTournamentEvent, createTestTournament } from '../data-service';
 import CreateEventForm from './CreateTournamentForm';
 import { ManageEvent } from './ManageEvent';
-import { CalendarIcon, MapPinIcon } from './Icons';
+import { CalendarIcon, MapPinIcon, SparklesIcon } from './Icons';
 
 interface ClubEventsPageProps {
     adminUser: User;
@@ -43,6 +43,7 @@ const ClubEventsPage: React.FC<ClubEventsPageProps> = ({ adminUser, onNavigate }
   const [clubEvents, setClubEvents] = useState<TournamentEvent[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<TournamentEvent | null>(null);
   const [view, setView] = useState<'list' | 'create_event'>('list');
+  const [isCreatingTest, setIsCreatingTest] = useState(false);
 
   const fetchData = async () => {
     const adminClub = await getClubByAdminId(adminUser.id);
@@ -61,6 +62,21 @@ const ClubEventsPage: React.FC<ClubEventsPageProps> = ({ adminUser, onNavigate }
     fetchData();
     setSelectedEvent(event); 
     setView('list');
+  }
+
+  const handleCreateTestTournament = async () => {
+    if (!club) return;
+    setIsCreatingTest(true);
+    try {
+        const newTestEvent = await createTestTournament(club.id);
+        await fetchData(); // Refresh the list
+        setSelectedEvent(newTestEvent); // Navigate to the new event's manage page
+    } catch (error) {
+        console.error("Failed to create test tournament:", error);
+        alert((error as Error).message || 'Ocorreu um erro ao criar o torneio de teste.');
+    } finally {
+        setIsCreatingTest(false);
+    }
   }
 
   const handleDeleteEvent = async (eventId: string) => {
@@ -96,12 +112,28 @@ const ClubEventsPage: React.FC<ClubEventsPageProps> = ({ adminUser, onNavigate }
     <div className="animate-fade-in">
       <div className="flex flex-wrap justify-between items-center gap-4 mb-8">
         <h2 className="text-3xl font-extrabold tracking-tight text-white">Gerenciar Eventos</h2>
-        <button
-            onClick={() => setView('create_event')}
-            className="bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-4 rounded transition-colors"
-        >
-            + Criar Novo Evento
-        </button>
+        <div className="flex flex-wrap gap-4">
+            <button
+                onClick={handleCreateTestTournament}
+                disabled={isCreatingTest}
+                className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded transition-colors flex items-center gap-2 disabled:bg-slate-600 disabled:cursor-not-allowed"
+            >
+                {isCreatingTest ? (
+                    'Criando...'
+                ) : (
+                    <>
+                        <SparklesIcon className="w-5 h-5" />
+                        Criar Torneio de Testes
+                    </>
+                )}
+            </button>
+            <button
+                onClick={() => setView('create_event')}
+                className="bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-4 rounded transition-colors"
+            >
+                + Criar Novo Evento
+            </button>
+        </div>
       </div>
       
       {club.subscription === SubscriptionPlan.FREE && (
