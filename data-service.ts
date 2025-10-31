@@ -4,6 +4,15 @@ import { supabase } from './lib/supabaseClient';
 
 const CART_KEY = 'shopping_cart';
 
+// --- Helper Functions ---
+export const isTestTournament = async (categoryId: string): Promise<boolean> => {
+    const category = await getCategoryById(categoryId);
+    if (!category) return false;
+
+    const event = await getEventById(category.eventId);
+    return event?.name.startsWith('[TESTE]') ?? false;
+};
+
 // --- Helper Functions for Data Mapping ---
 const mapUserFromDb = (data: any): User => ({
     id: data.id,
@@ -1248,6 +1257,16 @@ export const drawGroupsAndGenerateMatches = async (categoryId: string, config?: 
 };
 
 export const reopenRegistration = async (categoryId: string): Promise<TournamentCategory> => {
+    const category = await getCategoryById(categoryId);
+    if (!category) throw new Error("Categoria não encontrada.");
+
+    const event = await getEventById(category.eventId);
+    if (!event) throw new Error("Evento não encontrado.");
+
+    if (event.name.startsWith('[TESTE]')) {
+        throw new Error("Não é possível reabrir inscrições para torneios de teste.");
+    }
+
     const { data, error } = await supabase.from('tournament_categories').update({ status: TournamentStatus.REGISTRATION }).eq('id', categoryId).select('*, player_registrations(*)');
     if (error) throw new Error(error.message);
     if (!data || data.length === 0) throw new Error("Não foi possível reabrir as inscrições. Verifique suas permissões (RLS).");
@@ -1850,11 +1869,11 @@ export const createTestTournament = async (clubId: string): Promise<TournamentEv
         .select('id')
         .eq('is_test_user', true)
         .limit(16);
-        
+
     if (usersError || !testUsers || testUsers.length < 16) {
         throw new Error(usersError?.message || "Não foi possível encontrar os atletas de teste. Tente recarregar a página.");
     }
-    
+
     // 4. Register these users into the category
     const registrations = testUsers.map(user => ({
         user_id: user.id,
@@ -1867,11 +1886,59 @@ export const createTestTournament = async (clubId: string): Promise<TournamentEv
     if (registrationError) {
         throw new Error(registrationError.message || "Falha ao inscrever atletas de teste.");
     }
-    
+
     // 5. Close registrations for the category
     await closeRegistration(newCategoryData.id);
 
+    // 6. Generate the bracket with pre-filled results
+    await generateTestBracketWithResults(newCategoryData.id);
+
     return mapEventFromDb(newEventData);
+};
+
+// Helper function to generate test tournament with pre-filled results
+const generateTestBracketWithResults = async (categoryId: string): Promise<void> => {
+    // Generate groups and matches using the new step-by-step flow
+    const category = await drawGroupsAndGenerateMatches(categoryId, { playersPerGroup: 4, numAdvancing: 2 });
+    if (!category) throw new Error("Falha ao iniciar categoria de teste.");
+
+    // Simulate group stage results
+    const groupMatches = await getMatches(categoryId);
+    const groupStageMatches = groupMatches.filter(m => m.stage === 'GROUP');
+
+    for (const match of groupStageMatches) {
+        if (match.player1Id && match.player2Id && match.status === 'SCHEDULED') {
+            // Simulate a result: p1 wins 2-0 or 2-1, p2 wins half the time
+            const p1Wins = Math.random() < 0.6; // Player 1 wins 60% of the time
+            const setScores = p1Wins
+                ? [{ p1: 11, p2: 8 }, { p1: 11, p2: 5 }]  // P1 wins 2-0
+                : [{ p1: 11, p2: 9 }, { p1: 9, p2: 11 }, { p1: 11, p2: 7 }];  // P2 wins 2-1
+
+            await updateMatchResultAndAdvance(categoryId, match.id, setScores);
+        }
+    }
+
+    // Advance to knockout and simulate knockout results
+    const advancedCategory = await finalizeGroupStage(categoryId);
+    if (!advancedCategory) throw new Error("Falha ao finalizar fase de grupos.");
+
+    const knockoutCategory = await advanceFromGroupStage(categoryId);
+    if (!knockoutCategory) throw new Error("Falha ao gerar chaves da eliminatória.");
+
+    // Simulate knockout stage results
+    const knockoutMatches = (await getMatches(categoryId)).filter(m => m.stage === 'KNOCKOUT' && m.status === 'SCHEDULED');
+
+    for (const match of knockoutMatches) {
+        if (match.player1Id && match.player2Id) {
+            // Simulate winner (50/50 chance)
+            const p1Wins = Math.random() < 0.5;
+            const setScores = p1Wins
+                ? [{ p1: 11, p2: 9 }, { p1: 11, p2: 7 }]
+                : [{ p1: 9, p2: 11 }, { p1: 11, p2: 9 }, { p1: 11, p2: 7 }];
+
+            await updateMatchResultAndAdvance(categoryId, match.id, setScores);
+        }
+    }
 };
 
 

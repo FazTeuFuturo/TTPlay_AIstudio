@@ -9,6 +9,7 @@ interface GroupStageViewProps {
   players: User[];
   onScoreUpdate: (matchId: string, setScores: { p1: number, p2: number }[]) => void;
   tournamentStatus: TournamentStatus;
+  isEditable?: boolean;
 }
 
 const GroupTable: React.FC<{ group: Group; matches: Match[]; players: User[] }> = ({ group, matches, players }) => {
@@ -68,9 +69,9 @@ const GroupTable: React.FC<{ group: Group; matches: Match[]; players: User[] }> 
   );
 };
 
-export const GroupStageView: React.FC<GroupStageViewProps> = ({ groups, matches, players, onScoreUpdate, tournamentStatus }) => {
+export const GroupStageView: React.FC<GroupStageViewProps> = ({ groups, matches, players, onScoreUpdate, tournamentStatus, isEditable: externalIsEditable }) => {
   // Os logs de depuração foram removidos para limpar o console.
-  const isEditable = tournamentStatus === TournamentStatus.GROUP_STAGE;
+  const isEditable = externalIsEditable !== undefined ? externalIsEditable : tournamentStatus === TournamentStatus.GROUP_STAGE;
 
   return (
     <div className="space-y-12">

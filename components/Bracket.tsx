@@ -8,6 +8,7 @@ interface BracketProps {
   players: User[];
   onScoreUpdate: (matchId: string, setScores: { p1: number, p2: number }[]) => void;
   tournamentStatus: TournamentStatus;
+  isEditable?: boolean;
 }
 
 const getRoundName = (roundNumber: number, rounds: Record<number, Match[]>): string => {
@@ -43,7 +44,7 @@ const getRoundName = (roundNumber: number, rounds: Record<number, Match[]>): str
 };
 
 
-export const Bracket: React.FC<BracketProps> = ({ matches, players, onScoreUpdate, tournamentStatus }) => {
+export const Bracket: React.FC<BracketProps> = ({ matches, players, onScoreUpdate, tournamentStatus, isEditable: externalIsEditable }) => {
   const rounds = matches.reduce((acc, match) => {
     acc[match.round] = acc[match.round] || [];
     acc[match.round].push(match);
@@ -58,7 +59,7 @@ export const Bracket: React.FC<BracketProps> = ({ matches, players, onScoreUpdat
     : undefined;
   const finalWinner = players.find(p => p.id === finalWinnerId);
 
-  const isEditable = tournamentStatus === TournamentStatus.IN_PROGRESS;
+  const isEditable = externalIsEditable !== undefined ? externalIsEditable : tournamentStatus === TournamentStatus.IN_PROGRESS;
 
   return (
     <div className="py-8">

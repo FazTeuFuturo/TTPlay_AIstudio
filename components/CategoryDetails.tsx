@@ -252,9 +252,9 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
 
       // --- INÍCIO DA CORREÇÃO 2 ---
       // Definir aba ativa com base no estado ATUAL (usando as variáveis locais)
-      if (hasKnockout) {
+      if (cat.status === TournamentStatus.IN_PROGRESS && hasKnockout) {
         setActiveTab('bracket');
-      } else if (hasGroupMatches) {
+      } else if (cat.status === TournamentStatus.GROUP_STAGE || cat.status === TournamentStatus.KNOCKOUT_PENDING) {
         setActiveTab('groups');
       } else {
         setActiveTab('registrations');

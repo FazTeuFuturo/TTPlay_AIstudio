@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { TournamentCategory, Match, User, Group, TournamentStatus, TournamentFormat } from '../types';
-import { getMatches, getUsers, getGroups, updateMatchResultAndAdvance, drawGroupsAndGenerateMatches, getCategoryById, advanceFromGroupStage, finalizeGroupStage } from '../data-service';
+import { TournamentCategory, Match, User, Group, TournamentStatus, TournamentFormat, TournamentEvent } from '../types';
+import { getMatches, getUsers, getGroups, updateMatchResultAndAdvance, drawGroupsAndGenerateMatches, getCategoryById, getEventById, advanceFromGroupStage, finalizeGroupStage } from '../data-service';
 import { Bracket } from './Bracket';
 import { GroupStageView } from './GroupStageView';
 import { UsersIcon, PingPongPaddleIcon, ArrowLeftIcon, SpinnerIcon } from './Icons';
@@ -92,6 +92,7 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
   const [activeTab, setActiveTab] = useState<'registrations' | 'groups' | 'bracket'>(
     'registrations'
   );
+  const [isTestTournament, setIsTestTournament] = useState(false);
 
   const fetchData = async (catId: string) => {
     console.log('[DEBUG] ========== INICIANDO FETCHDATA ==========');
@@ -105,7 +106,11 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
         status: freshCategory.status,
         numAdvancingFromGroup: freshCategory.numAdvancingFromGroup
       });
-      
+
+      // Fetch event to check if it's a test tournament
+      const event = await getEventById(freshCategory.eventId);
+      setIsTestTournament(event?.name.startsWith('[TESTE]') ?? false);
+
       setCurrentCategory(freshCategory);
       const allMatches = await getMatches(freshCategory.id);
       setMatches(allMatches);
@@ -148,12 +153,10 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
         setGroups(await getGroups(freshCategory.id));
       }
       
-      if (hasKnockout) {
+      if (freshCategory.status === TournamentStatus.IN_PROGRESS && hasKnockout) {
         setActiveTab('bracket');
-      } else if (freshCategory.status === TournamentStatus.GROUP_STAGE) {
+      } else if (freshCategory.status === TournamentStatus.GROUP_STAGE || freshCategory.status === TournamentStatus.KNOCKOUT_PENDING) {
         setActiveTab('groups');
-      } else if (freshCategory.status === TournamentStatus.IN_PROGRESS || freshCategory.status === TournamentStatus.COMPLETED) {
-        setActiveTab('bracket');
       } else {
         setActiveTab('registrations');
       }
@@ -237,15 +240,6 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
         );
     }
 
-    if (currentCategory.status === TournamentStatus.REGISTRATION) {
-       return (
-        <div className="text-center py-16 bg-slate-800/30 rounded-lg">
-            <h2 className="text-2xl font-bold text-slate-300">Aguardando Encerramento das Inscrições</h2>
-            <p className="text-slate-500 mt-2">A área de administração da categoria ficará disponível assim que as inscrições forem encerradas.</p>
-        </div>
-       )
-    }
-    
     return (
       <>
         <div className="mb-6 border-b border-slate-700">
@@ -289,8 +283,10 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
              <div className="bg-slate-800/30 rounded-lg p-6">
                 <div className="flex flex-col md:flex-row justify-between md:items-center gap-4 mb-6">
                     <div>
-                        <h2 className="text-2xl font-bold text-slate-300">Inscrições Encerradas</h2>
-                        <p className="text-slate-500 mt-1">{currentCategory.registrations.length} atletas inscritos. Pronto para começar?</p>
+                        <h2 className="text-2xl font-bold text-slate-300">
+                            {currentCategory.status === TournamentStatus.REGISTRATION ? 'Atletas Inscritos' : 'Inscrições Encerradas'}
+                        </h2>
+                        <p className="text-slate-500 mt-1">{currentCategory.registrations.length} atletas na categoria.</p>
                     </div>
                     {currentCategory.status === TournamentStatus.REGISTRATION_CLOSED && (
                       <button
@@ -360,12 +356,13 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
                       )}
                     </div>
                   </div>
-                  <GroupStageView 
-                      groups={groups} 
-                      matches={groupMatches} 
-                      players={users} 
+                  <GroupStageView
+                      groups={groups}
+                      matches={groupMatches}
+                      players={users}
                       onScoreUpdate={handleScoreUpdate}
                       tournamentStatus={currentCategory.status}
+                      isEditable={!isTestTournament}
                   />
                 </div>
             ) : (
@@ -378,7 +375,7 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
 
         {activeTab === 'bracket' && (
           knockoutMatches.length > 0 ? (
-            <Bracket matches={knockoutMatches} players={users} onScoreUpdate={handleScoreUpdate} tournamentStatus={currentCategory.status} />
+            <Bracket matches={knockoutMatches} players={users} onScoreUpdate={handleScoreUpdate} tournamentStatus={currentCategory.status} isEditable={!isTestTournament} />
           ) : (
             <div className="text-center py-16 bg-slate-800/30 rounded-lg">
                 <h2 className="text-2xl font-bold text-slate-300">Chaveamento Indisponível</h2>
