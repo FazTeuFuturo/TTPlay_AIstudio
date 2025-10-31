@@ -1,6 +1,6 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Club, User, Gender, SubscriptionPlan } from '../types';
-import { updateClubDetails, transferClubAdminship } from '../data-service';
+import { updateClubDetails, inviteNewAdmin, getPendingAdminInvites, cancelAdminInvite } from '../data-service';
 import { ArrowLeftIcon, SpinnerIcon } from './Icons';
 import ImageCropper from './ImageCropper';
 
@@ -114,16 +114,72 @@ const ClubProfileForm: React.FC<ClubProfileFormProps> = ({ club, adminUser, mode
     setLoading(false);
   };
 
-  const handleTransferAdminship = () => {
+  const [isTransferring, setIsTransferring] = useState(false);
+  const [pendingInvites, setPendingInvites] = useState<any[]>([]);
+
+  // Carregar convites pendentes quando em modo de edição
+  useEffect(() => {
+    if (mode === 'edit' && club) {
+      loadPendingInvites();
+    }
+  }, [mode, club]);
+
+  const loadPendingInvites = async () => {
+    if (!club) return;
+    const invites = await getPendingAdminInvites(club.id);
+    setPendingInvites(invites);
+  };
+
+  const handleTransferAdminship = async () => {
     if (!club || !adminUser || !newAdminEmail) return;
+    
+    if (!window.confirm(
+      `Atenção!\n\n` +
+      `Você está prestes a transferir a administração do clube para ${newAdminEmail}.\n\n` +
+      `Após essa ação:\n` +
+      `• Você perderá seu acesso de administrador\n` +
+      `• Você será convertido para um perfil de jogador normal\n` +
+      `• Esta ação NÃO pode ser desfeita\n\n` +
+      `Deseja continuar?`
+    )) {
+      return;
+    }
+    
+    setIsTransferring(true);
     try {
-        transferClubAdminship(club.id, newAdminEmail, adminUser.id);
-        if (onAdminTransferSuccess) {
-            onAdminTransferSuccess();
+        const result = await inviteNewAdmin(club.id, newAdminEmail, adminUser.id);
+        
+        if (result.success) {
+          alert(result.message);
+          setNewAdminEmail('');
+          
+          if (!result.requiresSignup) {
+            // Transferência imediata - fazer logout
+            if (onAdminTransferSuccess) {
+              onAdminTransferSuccess();
+            }
+          } else {
+            // Convite criado - recarregar lista de convites
+            await loadPendingInvites();
+          }
         }
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         alert(`Erro ao transferir administração: ${errorMessage}`);
+    } finally {
+        setIsTransferring(false);
+    }
+  };
+
+  const handleCancelInvite = async (inviteId: string) => {
+    if (!window.confirm('Deseja cancelar este convite pendente?')) return;
+    
+    const success = await cancelAdminInvite(inviteId);
+    if (success) {
+      alert('Convite cancelado com sucesso.');
+      await loadPendingInvites();
+    } else {
+      alert('Erro ao cancelar convite.');
     }
   };
 
@@ -223,6 +279,33 @@ const ClubProfileForm: React.FC<ClubProfileFormProps> = ({ club, adminUser, mode
                         <p className="text-sm text-yellow-400 bg-yellow-900/50 p-3 rounded-lg">
                             <strong>Atenção:</strong> Ao transferir a administração, você perderá seu acesso de administrador a este clube e será convertido para um perfil de jogador normal. Esta ação não pode ser desfeita.
                         </p>
+                        
+                        {/* Convites Pendentes */}
+                        {pendingInvites.length > 0 && (
+                          <div className="bg-blue-900/30 border border-blue-700 rounded-lg p-4">
+                            <h4 className="font-bold text-blue-300 mb-3">Convites Pendentes</h4>
+                            <div className="space-y-2">
+                              {pendingInvites.map(invite => (
+                                <div key={invite.id} className="flex items-center justify-between bg-slate-800 p-3 rounded">
+                                  <div>
+                                    <p className="text-white font-medium">{invite.new_admin_email}</p>
+                                    <p className="text-xs text-slate-400">
+                                      Enviado em {new Date(invite.created_at).toLocaleDateString('pt-BR')}
+                                    </p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCancelInvite(invite.id)}
+                                    className="text-red-400 hover:text-red-300 text-sm font-bold"
+                                  >
+                                    Cancelar
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        
                         <div>
                             <label htmlFor="newAdminEmail" className="block text-sm font-medium text-slate-300 mb-2">E-mail do Novo Administrador</label>
                             <input
@@ -232,53 +315,139 @@ const ClubProfileForm: React.FC<ClubProfileFormProps> = ({ club, adminUser, mode
                                 onChange={(e) => setNewAdminEmail(e.target.value)}
                                 className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white"
                                 placeholder="email@exemplo.com"
+                                disabled={isTransferring}
                             />
+                            <p className="text-xs text-slate-400 mt-2">
+                              Se o email já estiver cadastrado, a transferência será imediata. Caso contrário, um convite será enviado.
+                            </p>
                         </div>
                         <button
                             type="button"
                             onClick={handleTransferAdminship}
-                            disabled={!newAdminEmail}
-                            className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-2 px-4 rounded transition-colors disabled:bg-slate-600 disabled:cursor-not-allowed"
+                            disabled={!newAdminEmail || isTransferring}
+                            className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-2 px-4 rounded transition-colors disabled:bg-slate-600 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                         >
-                            Transferir Administração
+                            {isTransferring ? (
+                              <>
+                                <SpinnerIcon className="w-5 h-5" />
+                                Processando...
+                              </>
+                            ) : (
+                              'Transferir Administração'
+                            )}
                         </button>
                     </div>
                 </fieldset>
             )}
 
             {mode === 'register' && (
-                 <fieldset className="pt-6">
-                    <legend className="text-xl font-bold text-white mb-4">Dados do Administrador</legend>
-                    <div className="space-y-6">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div>
-                                <label htmlFor="adminEmail" className="block text-sm font-medium text-slate-300 mb-2">Email do Admin</label>
-                                <input type="email" name="email" id="adminEmail" value={adminData.email} onChange={handleAdminChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required disabled={loading} />
-                            </div>
-                            <div>
-                                <label htmlFor="password" className="block text-sm font-medium text-slate-300 mb-2">Senha do Admin</label>
-                                <input type="password" name="password" id="password" value={adminData.password} onChange={handleAdminChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required disabled={loading} />
+                <>
+                    {/* Seção 1: Dados de Acesso */}
+                    <fieldset className="pt-6">
+                        <legend className="text-xl font-bold text-white mb-2">Dados de Acesso da Conta</legend>
+                        <p className="text-sm text-slate-400 mb-4">
+                            Estes dados serão usados para acessar a conta do clube no sistema.
+                        </p>
+                        <div className="space-y-6">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label htmlFor="adminEmail" className="block text-sm font-medium text-slate-300 mb-2">
+                                        Email da Conta do Clube
+                                    </label>
+                                    <input 
+                                        type="email" 
+                                        name="email" 
+                                        id="adminEmail" 
+                                        value={adminData.email} 
+                                        onChange={handleAdminChange} 
+                                        className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" 
+                                        placeholder="contato@clube.com.br"
+                                        required 
+                                        disabled={loading} 
+                                    />
+                                    <p className="text-xs text-slate-500 mt-1">Este email será usado para login no sistema</p>
+                                </div>
+                                <div>
+                                    <label htmlFor="password" className="block text-sm font-medium text-slate-300 mb-2">
+                                        Senha de Acesso
+                                    </label>
+                                    <input 
+                                        type="password" 
+                                        name="password" 
+                                        id="password" 
+                                        value={adminData.password} 
+                                        onChange={handleAdminChange} 
+                                        className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" 
+                                        placeholder="Mínimo 6 caracteres"
+                                        required 
+                                        disabled={loading} 
+                                    />
+                                    <p className="text-xs text-slate-500 mt-1">Senha para acessar a conta</p>
+                                </div>
                             </div>
                         </div>
-                        <div>
-                            <label htmlFor="adminName" className="block text-sm font-medium text-slate-300 mb-2">Nome Completo do Admin</label>
-                            <input type="text" name="name" id="adminName" value={adminData.name} onChange={handleAdminChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required disabled={loading} />
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    </fieldset>
+
+                    {/* Seção 3: Dados do Gestor */}
+                    <fieldset className="pt-6">
+                        <legend className="text-xl font-bold text-white mb-2">Dados do Gestor Responsável</legend>
+                        <p className="text-sm text-slate-400 mb-4">
+                            Informações da pessoa que irá gerenciar o clube.
+                        </p>
+                        <div className="space-y-6">
                             <div>
-                                <label htmlFor="birthDate" className="block text-sm font-medium text-slate-300 mb-2">Data de Nascimento</label>
-                                <input type="date" name="birthDate" id="birthDate" value={adminData.birthDate} onChange={handleAdminChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required disabled={loading} />
+                                <label htmlFor="adminName" className="block text-sm font-medium text-slate-300 mb-2">
+                                    Nome Completo do Gestor
+                                </label>
+                                <input 
+                                    type="text" 
+                                    name="name" 
+                                    id="adminName" 
+                                    value={adminData.name} 
+                                    onChange={handleAdminChange} 
+                                    className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" 
+                                    placeholder="João Silva"
+                                    required 
+                                    disabled={loading} 
+                                />
                             </div>
-                            <div>
-                                <label htmlFor="gender" className="block text-sm font-medium text-slate-300 mb-2">Gênero</label>
-                                <select name="gender" id="gender" value={adminData.gender} onChange={handleAdminChange} className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" required disabled={loading}>
-                                    <option value={Gender.MALE}>Masculino</option>
-                                    <option value={Gender.FEMALE}>Feminino</option>
-                                </select>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label htmlFor="birthDate" className="block text-sm font-medium text-slate-300 mb-2">
+                                        Data de Nascimento
+                                    </label>
+                                    <input 
+                                        type="date" 
+                                        name="birthDate" 
+                                        id="birthDate" 
+                                        value={adminData.birthDate} 
+                                        onChange={handleAdminChange} 
+                                        className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" 
+                                        required 
+                                        disabled={loading} 
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="gender" className="block text-sm font-medium text-slate-300 mb-2">
+                                        Gênero
+                                    </label>
+                                    <select 
+                                        name="gender" 
+                                        id="gender" 
+                                        value={adminData.gender} 
+                                        onChange={handleAdminChange} 
+                                        className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white" 
+                                        required 
+                                        disabled={loading}
+                                    >
+                                        <option value={Gender.MALE}>Masculino</option>
+                                        <option value={Gender.FEMALE}>Feminino</option>
+                                    </select>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                 </fieldset>
+                    </fieldset>
+                </>
             )}
 
           <div className="flex justify-end pt-6">

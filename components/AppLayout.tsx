@@ -1,22 +1,33 @@
 import React from 'react';
-import { User, Club } from '../types';
+import { User, Club, ClubMemberRole } from '../types';
 import Sidebar from './Sidebar';
 import BottomNav from './BottomNav';
 
 interface AppLayoutProps {
   user: User;
   managedClub: Club | null;
+  clubRole?: ClubMemberRole | null;
+  managedClubsCount?: number;
   activeView: string;
   onNavigate: (view: 'dashboard' | 'events' | 'profile') => void;
+  onSwitchClub?: () => void;
   children: React.ReactNode;
 }
 
-const AppLayout: React.FC<AppLayoutProps> = ({ user, managedClub, activeView, onNavigate, children }) => {
+const AppLayout: React.FC<AppLayoutProps> = ({ user, managedClub, clubRole, managedClubsCount, activeView, onNavigate, onSwitchClub, children }) => {
   return (
     <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex-grow flex flex-col md:flex-row">
       {/* Sidebar for desktop */}
       <div className="hidden md:block w-64 flex-shrink-0 pr-8 py-8">
-        <Sidebar user={user} managedClub={managedClub} activeView={activeView} onNavigate={onNavigate} />
+        <Sidebar 
+          user={user} 
+          managedClub={managedClub}
+          clubRole={clubRole}
+          managedClubsCount={managedClubsCount}
+          activeView={activeView} 
+          onNavigate={onNavigate}
+          onSwitchClub={onSwitchClub}
+        />
       </div>
       
       {/* Main content */}

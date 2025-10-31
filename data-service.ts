@@ -1,5 +1,5 @@
 import { TOURNAMENT_EVENTS, INITIAL_MATCHES_CAT_1, CLUBS, TOURNAMENT_CATEGORIES } from './constants';
-import { TournamentEvent, User, Match, UserSession, Role, PlayerRegistration, RegistrationStatus, Club, TournamentStatus, Group, TournamentCategory, Gender, TournamentFormat, CartItem, SubscriptionPlan, DiscountRule, RatingHistory, PlayerStats, ClubStats, RecentMatch } from './types';
+import { TournamentEvent, User, Match, UserSession, Role, PlayerRegistration, RegistrationStatus, Club, TournamentStatus, Group, TournamentCategory, Gender, TournamentFormat, CartItem, SubscriptionPlan, DiscountRule, RatingHistory, PlayerStats, ClubStats, RecentMatch, ClubMember, ClubMemberRole, ClubMemberStatus, ManagedClub, ClubMemberWithUser } from './types';
 import { supabase } from './lib/supabaseClient';
 
 const CART_KEY = 'shopping_cart';
@@ -65,6 +65,7 @@ const mapCategoryFromDb = (data: any): TournamentCategory => ({
     })),
     startTime: data.start_time,
     playersPerGroup: data.players_per_group,
+    numAdvancingFromGroup: data.num_advancing_from_group,
     kFactor: data.k_factor,
 });
 
@@ -172,19 +173,37 @@ export const registerClub = async (clubData: Partial<Club>, adminData: Partial<U
         throw new Error("Campos obrigatórios ausentes para o clube ou o administrador.");
     }
 
-    const { data: authData, error: signUpError } = await supabase.auth.signUp({ email, password });
+    console.log('[REGISTER-CLUB] Iniciando cadastro de clube:', { email, clubName: clubData.name });
 
-    if (signUpError) throw new Error(`Erro ao cadastrar administrador: ${signUpError.message}`);
-    if (!authData.user) throw new Error("Não foi possível criar o usuário administrador.");
+    // 1. Criar usuário no auth
+    const { data: authData, error: signUpError } = await supabase.auth.signUp({ 
+        email, 
+        password,
+        options: {
+            data: {
+                name: name,
+                role: Role.CLUB_ADMIN
+            }
+        }
+    });
+
+    if (signUpError) {
+        console.error('[REGISTER-CLUB] Erro no signUp:', signUpError);
+        throw new Error(`Erro ao cadastrar administrador: ${signUpError.message}`);
+    }
+    if (!authData.user) {
+        throw new Error("Não foi possível criar o usuário administrador.");
+    }
     
     const adminId = authData.user.id;
+    console.log('[REGISTER-CLUB] Usuário criado:', adminId);
 
-    // The trigger will create a basic user profile. Now create the club.
+    // 2. Criar o clube (sem admin_id ainda, pois não é mais obrigatório no novo sistema)
     const { data: newClub, error: clubError } = await supabase
         .from('clubs')
         .insert({
             name: clubData.name!,
-            admin_id: adminId,
+            admin_id: adminId, // Mantém por compatibilidade
             description: clubData.description,
             address: clubData.address,
             city: clubData.city,
@@ -198,10 +217,13 @@ export const registerClub = async (clubData: Partial<Club>, adminData: Partial<U
         .single();
     
     if (clubError) {
+        console.error('[REGISTER-CLUB] Erro ao criar clube:', clubError);
         throw new Error(`Erro ao criar o clube: ${clubError.message}`);
     }
 
-    // Now, update the admin's profile with role and club link.
+    console.log('[REGISTER-CLUB] Clube criado:', newClub.id);
+
+    // 3. Atualizar perfil do admin com informações básicas
     const { data: updatedAdmins, error: adminUpdateError } = await supabase
         .from('users')
         .update({
@@ -209,12 +231,13 @@ export const registerClub = async (clubData: Partial<Club>, adminData: Partial<U
             birth_date: birthDate,
             gender,
             role: Role.CLUB_ADMIN,
-            club_id: newClub.id,
+            club_id: newClub.id, // Mantém por compatibilidade
         })
         .eq('id', adminId)
         .select();
     
     if (adminUpdateError) {
+        console.error('[REGISTER-CLUB] Erro ao atualizar admin:', adminUpdateError);
         throw new Error(`Erro ao atualizar perfil do administrador: ${adminUpdateError.message}`);
     }
 
@@ -222,6 +245,28 @@ export const registerClub = async (clubData: Partial<Club>, adminData: Partial<U
         throw new Error("Falha ao recuperar o perfil do admin atualizado.");
     }
 
+    console.log('[REGISTER-CLUB] Perfil do admin atualizado');
+
+    // 4. **NOVO**: Criar registro em club_members com role OWNER
+    const { error: memberError } = await supabase
+        .from('club_members')
+        .insert({
+            club_id: newClub.id,
+            user_id: adminId,
+            role: ClubMemberRole.OWNER,
+            status: ClubMemberStatus.ACTIVE
+        });
+    
+    if (memberError) {
+        console.error('[REGISTER-CLUB] Erro ao criar membro:', memberError);
+        // Não vamos lançar erro aqui para manter compatibilidade
+        // throw new Error(`Erro ao criar registro de membro: ${memberError.message}`);
+        console.warn('[REGISTER-CLUB] AVISO: Não foi possível criar registro em club_members. Sistema funcionará em modo legado.');
+    } else {
+        console.log('[REGISTER-CLUB] Registro em club_members criado com sucesso');
+    }
+
+    console.log('[REGISTER-CLUB] Cadastro completo!');
     return { club: mapClubFromDb(newClub), admin: mapUserFromDb(updatedAdmins[0]) };
 };
 
@@ -321,6 +366,25 @@ export const getUsers = async (userIds?: string[]): Promise<User[]> => {
         console.error("Error fetching users:", error.message);
         return [];
     }
+    return data.map(mapUserFromDb);
+};
+
+export const searchUsers = async (searchTerm: string): Promise<User[]> => {
+    if (!searchTerm || searchTerm.trim().length < 3) {
+        return [];
+    }
+
+    const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .or(`name.ilike.%${searchTerm}%,email.ilike.%${searchTerm}%,phone.ilike.%${searchTerm}%`)
+        .limit(10);
+
+    if (error) {
+        console.error("Error searching users:", error.message);
+        return [];
+    }
+
     return data.map(mapUserFromDb);
 };
 
@@ -532,8 +596,19 @@ export const updateMatchResultAndAdvance = async (categoryId: string, matchId: s
 
     // 6. Advance Winner if Knockout Stage
     if (match.stage === 'KNOCKOUT') {
-        const totalRounds = Math.log2(Math.pow(2, Math.ceil(Math.log2(category.max_participants))));
-        if (match.round < totalRounds) {
+        // Get all knockout matches to determine total rounds
+        const { data: allKnockoutMatches } = await supabase
+            .from('matches')
+            .select('round')
+            .eq('category_id', categoryId)
+            .eq('stage', 'KNOCKOUT')
+            .order('round', { ascending: false })
+            .limit(1);
+        
+        const maxRound = allKnockoutMatches && allKnockoutMatches.length > 0 ? allKnockoutMatches[0].round : 0;
+        
+        if (match.round < maxRound) {
+            // Not the final, advance winner to next round
             const nextRound = match.round + 1;
             const nextMatchInRound = Math.ceil(match.matchInRound / 2);
             const isPlayer1InNextMatch = match.matchInRound % 2 !== 0;
@@ -544,6 +619,19 @@ export const updateMatchResultAndAdvance = async (categoryId: string, matchId: s
                 .match({ category_id: categoryId, round: nextRound, match_in_round: nextMatchInRound });
 
             if (advanceError) console.error(`Failed to advance winner: ${advanceError.message}`);
+        } else if (match.round === maxRound) {
+            // This is the final! Update category status to COMPLETED
+            console.log('[DEBUG-FINAL] Última partida completada! Atualizando status para COMPLETED');
+            const { error: statusError } = await supabase
+                .from('tournament_categories')
+                .update({ status: TournamentStatus.COMPLETED })
+                .eq('id', categoryId);
+            
+            if (statusError) {
+                console.error('[DEBUG-FINAL] Erro ao atualizar status:', statusError);
+            } else {
+                console.log('[DEBUG-FINAL] Status atualizado para COMPLETED com sucesso!');
+            }
         }
     }
     
@@ -711,18 +799,32 @@ export const closeRegistration = async (categoryId: string): Promise<TournamentC
 }
 
 export const finalizeGroupStage = async (categoryId: string): Promise<TournamentCategory> => {
+    console.log('[DEBUG-FINALIZE] Tentando finalizar fase de grupos:', categoryId);
+    console.log('[DEBUG-FINALIZE] Status que será enviado:', TournamentStatus.KNOCKOUT_PENDING);
+    
     const { data, error } = await supabase
         .from('tournament_categories')
         .update({ status: TournamentStatus.KNOCKOUT_PENDING })
         .eq('id', categoryId)
         .select('*, player_registrations(*)');
-        
+    
+    console.log('[DEBUG-FINALIZE] Resposta do Supabase:', { data, error });
+    
     if (error) {
+        console.error('[DEBUG-FINALIZE] ERRO DETALHADO:', {
+            message: error.message,
+            details: error.details,
+            hint: error.hint,
+            code: error.code
+        });
         throw new Error(error.message);
     }
     if (!data || data.length === 0) {
+        console.error('[DEBUG-FINALIZE] Nenhum dado retornado');
         throw new Error("Não foi possível finalizar a fase de grupos. Verifique suas permissões (RLS).");
     }
+    
+    console.log('[DEBUG-FINALIZE] Sucesso! Categoria atualizada:', data[0]);
     return mapCategoryFromDb(data[0]);
 }
 
@@ -862,9 +964,18 @@ export const startCategory = async (categoryId: string, config?: { playersPerGro
     return updatedCategory;
 };
 
-export const generateKnockoutStage = async (categoryId: string): Promise<TournamentCategory> => {
+export const advanceFromGroupStage = async (categoryId: string): Promise<TournamentCategory> => {
+    console.log('[DEBUG-ADVANCE] Tentando gerar chaves da eliminatória:', categoryId);
+    
     const category = await getCategoryById(categoryId);
     if (!category) throw new Error("Categoria não encontrada.");
+    
+    console.log('[DEBUG-ADVANCE] Status da categoria:', category.status);
+    console.log('[DEBUG-ADVANCE] Status esperado:', TournamentStatus.KNOCKOUT_PENDING);
+    
+    if (category.status !== TournamentStatus.KNOCKOUT_PENDING) {
+        throw new Error("A categoria não está pronta para gerar as chaves. Finalize a fase de grupos primeiro.");
+    }
     if (category.format !== TournamentFormat.GRUPOS_E_ELIMINATORIA) {
         throw new Error("Esta categoria não possui fase de grupos + eliminatória.");
     }
@@ -902,19 +1013,51 @@ export const generateKnockoutStage = async (categoryId: string): Promise<Tournam
     if (!groups) throw new Error("Grupos não encontrados.");
 
     const qualifiedPlayers: string[] = [];
+    
+    // Calcular standings para cada grupo manualmente
     for (const group of groups) {
-        // Buscar jogadores do grupo ordenados por pontuação
-        const { data: groupStandings } = await supabase.rpc('get_group_standings', {
-            p_group_id: group.id
+        // Buscar todas as partidas do grupo
+        const groupMatchesForStanding = groupMatches.filter(m => m.group_id === group.id);
+        
+        // Coletar todos os jogadores do grupo
+        const playerIds = new Set<string>();
+        groupMatchesForStanding.forEach(m => {
+            if (m.player1_id) playerIds.add(m.player1_id);
+            if (m.player2_id) playerIds.add(m.player2_id);
         });
-
+        
+        // Calcular estatísticas para cada jogador
+        const playerStats = Array.from(playerIds).map(playerId => {
+            const playerMatches = groupMatchesForStanding.filter(
+                m => (m.player1_id === playerId || m.player2_id === playerId) && m.status === 'COMPLETED'
+            );
+            
+            const wins = playerMatches.filter(m => m.winner_id === playerId).length;
+            const losses = playerMatches.length - wins;
+            const points = (wins * 2) + (losses * 1); // 2 pontos por vitória, 1 por derrota
+            
+            return {
+                player_id: playerId,
+                points,
+                wins,
+                losses,
+                played: playerMatches.length
+            };
+        });
+        
+        // Ordenar por pontos (decrescente) e depois por vitórias (decrescente)
+        playerStats.sort((a, b) => {
+            if (b.points !== a.points) return b.points - a.points;
+            return b.wins - a.wins;
+        });
+        
         // Pegar os N primeiros de cada grupo (numAdvancingFromGroup)
-        if (groupStandings) {
-            const advancing = groupStandings
-                .slice(0, category.numAdvancingFromGroup || 2)
-                .map((p: any) => p.player_id);
-            qualifiedPlayers.push(...advancing);
-        }
+        const numAdvancing = category.numAdvancingFromGroup || 2;
+        const advancing = playerStats
+            .slice(0, numAdvancing)
+            .map(p => p.player_id);
+        
+        qualifiedPlayers.push(...advancing);
     }
 
     if (qualifiedPlayers.length === 0) {
@@ -956,7 +1099,7 @@ export const generateKnockoutStage = async (categoryId: string): Promise<Tournam
                 // Já coloca o jogador na próxima fase
                 const nextRoundMatch = matchesToCreate.find(
                     m => m.round === 2 && 
-                    m.match_in_round === Math.ceil(matchIndex / 2)
+                    m.match_in_round === Math.ceil((matchIndex + 1) / 2)
                 );
                 if (nextRoundMatch) {
                     if (matchIndex % 2 === 0) nextRoundMatch.player1_id = qualifiedPlayers[i];
@@ -1433,11 +1576,226 @@ export const upgradeClubSubscription = async (clubId: string): Promise<Club | nu
     return mapClubFromDb(data);
 }
 
-export const transferClubAdminship = (clubId: string, newAdminEmail: string, currentAdminId: string): {success: boolean} => {
+/**
+ * Convida um novo administrador para o clube
+ * Se o email já estiver cadastrado, transfere imediatamente
+ * Se não, cria um convite pendente e o Supabase envia o email automaticamente
+ */
+export const inviteNewAdmin = async (clubId: string, newAdminEmail: string, currentAdminId: string): Promise<{ success: boolean; requiresSignup: boolean; message: string; inviteId?: string }> => {
     if (!newAdminEmail) throw new Error("O e-mail do novo administrador é obrigatório.");
-    console.error("transferClubAdminship is not implemented for Supabase yet. This requires a secure Edge Function.");
-    return { success: false };
+    
+    console.log('[DEBUG-ADMIN-TRANSFER] Iniciando convite para novo admin:', { clubId, newAdminEmail });
+    
+    // 1. Verificar se o email já está cadastrado
+    const { data: existingUser, error: userError } = await supabase
+        .from('users')
+        .select('id, role, email')
+        .eq('email', newAdminEmail)
+        .single();
+    
+    if (userError && userError.code !== 'PGRST116') { // PGRST116 = not found, outros erros são problemas reais
+        console.error('[DEBUG-ADMIN-TRANSFER] Erro ao buscar usuário:', userError);
+        throw new Error(`Erro ao verificar usuário: ${userError.message}`);
+    }
+    
+    if (existingUser) {
+        // Usuário já existe - transferir imediatamente
+        console.log('[DEBUG-ADMIN-TRANSFER] Usuário já cadastrado, transferindo imediatamente');
+        return await transferAdminshipImmediate(clubId, existingUser.id, currentAdminId);
+    } else {
+        // Usuário não existe - criar convite e enviar email
+        console.log('[DEBUG-ADMIN-TRANSFER] Usuário não cadastrado, criando convite');
+        
+        // Criar convite pendente
+        const { data: invite, error: inviteError } = await supabase
+            .from('admin_transfer_invites')
+            .insert({
+                club_id: clubId,
+                current_admin_id: currentAdminId,
+                new_admin_email: newAdminEmail,
+                status: 'PENDING'
+            })
+            .select()
+            .single();
+        
+        if (inviteError) {
+            console.error('[DEBUG-ADMIN-TRANSFER] Erro ao criar convite:', inviteError);
+            throw new Error(`Erro ao criar convite: ${inviteError.message}`);
+        }
+        
+        console.log('[DEBUG-ADMIN-TRANSFER] Convite criado:', invite.id);
+        
+        // Enviar convite via Supabase Auth
+        const { data: inviteData, error: inviteAuthError } = await supabase.auth.admin.inviteUserByEmail(newAdminEmail, {
+            data: {
+                club_id: clubId,
+                invite_id: invite.id,
+                role: Role.CLUB_ADMIN
+            }
+        });
+        
+        if (inviteAuthError) {
+            console.error('[DEBUG-ADMIN-TRANSFER] Erro ao enviar convite:', inviteAuthError);
+            // Marcar convite como cancelado se o email falhar
+            await supabase
+                .from('admin_transfer_invites')
+                .update({ status: 'CANCELLED' })
+                .eq('id', invite.id);
+            throw new Error(`Erro ao enviar convite por email: ${inviteAuthError.message}`);
+        }
+        
+        console.log('[DEBUG-ADMIN-TRANSFER] Email de convite enviado com sucesso');
+        
+        return {
+            success: true,
+            requiresSignup: true,
+            message: `Convite enviado para ${newAdminEmail}. A transferência será completada quando a pessoa aceitar o convite e criar sua conta.`,
+            inviteId: invite.id
+        };
+    }
+};
+
+/**
+ * Transfere a administração imediatamente para um usuário já cadastrado
+ */
+const transferAdminshipImmediate = async (clubId: string, newAdminId: string, currentAdminId: string): Promise<{ success: boolean; requiresSignup: boolean; message: string }> => {
+    console.log('[DEBUG-ADMIN-TRANSFER] Executando transferência imediata:', { clubId, newAdminId, currentAdminId });
+    
+    // Validações
+    if (newAdminId === currentAdminId) {
+        throw new Error("Você já é o administrador deste clube.");
+    }
+    
+    // 1. Atualizar clube com novo admin
+    const { error: clubError } = await supabase
+        .from('clubs')
+        .update({ admin_id: newAdminId })
+        .eq('id', clubId);
+    
+    if (clubError) {
+        console.error('[DEBUG-ADMIN-TRANSFER] Erro ao atualizar clube:', clubError);
+        throw new Error(`Erro ao atualizar clube: ${clubError.message}`);
+    }
+    
+    // 2. Atualizar papel do novo admin
+    const { error: newAdminError } = await supabase
+        .from('users')
+        .update({ 
+            role: Role.CLUB_ADMIN,
+            club_id: clubId 
+        })
+        .eq('id', newAdminId);
+    
+    if (newAdminError) {
+        console.error('[DEBUG-ADMIN-TRANSFER] Erro ao atualizar novo admin:', newAdminError);
+        throw new Error(`Erro ao atualizar novo administrador: ${newAdminError.message}`);
+    }
+    
+    // 3. Reverter papel do admin anterior para PLAYER
+    const { error: oldAdminError } = await supabase
+        .from('users')
+        .update({ 
+            role: Role.PLAYER,
+            club_id: null 
+        })
+        .eq('id', currentAdminId);
+    
+    if (oldAdminError) {
+        console.error('[DEBUG-ADMIN-TRANSFER] Erro ao atualizar admin anterior:', oldAdminError);
+        throw new Error(`Erro ao atualizar administrador anterior: ${oldAdminError.message}`);
+    }
+    
+    // 4. Registrar no histórico de auditoria
+    const { error: historyError } = await supabase
+        .from('admin_transfer_history')
+        .insert({
+            club_id: clubId,
+            previous_admin_id: currentAdminId,
+            new_admin_id: newAdminId,
+            transfer_method: 'DIRECT',
+            notes: 'Transferência imediata - usuário já cadastrado'
+        });
+    
+    if (historyError) {
+        console.warn('[DEBUG-ADMIN-TRANSFER] Aviso: Erro ao registrar histórico:', historyError);
+        // Não lançar erro, pois a transferência já foi feita
+    }
+    
+    console.log('[DEBUG-ADMIN-TRANSFER] Transferência completada com sucesso');
+    
+    return {
+        success: true,
+        requiresSignup: false,
+        message: 'Transferência de administração concluída com sucesso!'
+    };
+};
+
+/**
+ * @deprecated Use inviteNewAdmin ao invés desta função
+ */
+export const transferClubAdminship = (clubId: string, newAdminEmail: string, currentAdminId: string): {success: boolean} => {
+    console.warn("transferClubAdminship está deprecated. Use inviteNewAdmin.");
+    throw new Error("Esta função está obsoleta. Use inviteNewAdmin ao invés.");
 }
+
+/**
+ * Cancela um convite pendente de transferência de admin
+ */
+export const cancelAdminInvite = async (inviteId: string): Promise<boolean> => {
+    const { error } = await supabase
+        .from('admin_transfer_invites')
+        .update({ status: 'CANCELLED' })
+        .eq('id', inviteId)
+        .eq('status', 'PENDING');
+    
+    if (error) {
+        console.error('[DEBUG-ADMIN-TRANSFER] Erro ao cancelar convite:', error);
+        return false;
+    }
+    
+    return true;
+};
+
+/**
+ * Lista convites pendentes para um clube
+ */
+export const getPendingAdminInvites = async (clubId: string): Promise<any[]> => {
+    const { data, error } = await supabase
+        .from('admin_transfer_invites')
+        .select('*')
+        .eq('club_id', clubId)
+        .eq('status', 'PENDING')
+        .order('created_at', { ascending: false });
+    
+    if (error) {
+        console.error('[DEBUG-ADMIN-TRANSFER] Erro ao buscar convites:', error);
+        return [];
+    }
+    
+    return data || [];
+};
+
+/**
+ * Obtém histórico de transferências de um clube
+ */
+export const getAdminTransferHistory = async (clubId: string): Promise<any[]> => {
+    const { data, error } = await supabase
+        .from('admin_transfer_history')
+        .select(`
+            *,
+            previous_admin:users!previous_admin_id(id, name, email),
+            new_admin:users!new_admin_id(id, name, email)
+        `)
+        .eq('club_id', clubId)
+        .order('transferred_at', { ascending: false });
+    
+    if (error) {
+        console.error('[DEBUG-ADMIN-TRANSFER] Erro ao buscar histórico:', error);
+        return [];
+    }
+    
+    return data || [];
+};
 
 // --- Deletion ---
 export const deleteTournamentCategory = async (categoryId: string): Promise<void> => {
@@ -1516,6 +1874,209 @@ export const createTestTournament = async (clubId: string): Promise<TournamentEv
     return mapEventFromDb(newEventData);
 };
 
+
+// ============================================================================
+// --- Club Members System Functions ---
+// ============================================================================
+
+/**
+ * Obtém todos os clubes que um usuário gerencia (OWNER, ADMIN, STAFF)
+ */
+export const getManagedClubs = async (userId: string): Promise<ManagedClub[]> => {
+    const { data, error } = await supabase
+        .rpc('get_managed_clubs', { p_user_id: userId });
+    
+    if (error) {
+        console.error('[CLUB-MEMBERS] Erro ao buscar clubes gerenciados:', error);
+        return [];
+    }
+    
+    return (data || []).map((row: any) => ({
+        clubId: row.club_id,
+        clubName: row.club_name,
+        role: row.role as ClubMemberRole,
+        joinedAt: row.joined_at
+    }));
+};
+
+/**
+ * Obtém todos os membros de um clube (filtro opcional por role)
+ */
+export const getClubMembers = async (clubId: string, role?: ClubMemberRole): Promise<ClubMemberWithUser[]> => {
+    const { data, error } = await supabase
+        .rpc('get_club_members', { 
+            p_club_id: clubId,
+            p_role: role || null
+        });
+    
+    if (error) {
+        console.error('[CLUB-MEMBERS] Erro ao buscar membros:', error);
+        return [];
+    }
+    
+    return (data || []).map((row: any) => ({
+        id: row.member_id,
+        clubId: clubId,
+        userId: row.user_id,
+        role: row.role as ClubMemberRole,
+        status: row.status as ClubMemberStatus,
+        joinedAt: row.joined_at,
+        userName: row.user_name,
+        userEmail: row.user_email
+    }));
+};
+
+/**
+ * Adiciona um membro ao clube
+ */
+export const addClubMember = async (
+    clubId: string, 
+    userId: string, 
+    role: ClubMemberRole
+): Promise<boolean> => {
+    const { error } = await supabase
+        .from('club_members')
+        .insert({
+            club_id: clubId,
+            user_id: userId,
+            role: role,
+            status: ClubMemberStatus.ACTIVE
+        });
+    
+    if (error) {
+        console.error('[CLUB-MEMBERS] Erro ao adicionar membro:', error);
+        return false;
+    }
+    
+    return true;
+};
+
+/**
+ * Atualiza o role ou status de um membro
+ */
+export const updateClubMemberRole = async (
+    memberId: string,
+    role?: ClubMemberRole,
+    status?: ClubMemberStatus
+): Promise<boolean> => {
+    const updateData: any = {};
+    if (role) updateData.role = role;
+    if (status) updateData.status = status;
+    
+    if (Object.keys(updateData).length === 0) return true;
+    
+    const { error } = await supabase
+        .from('club_members')
+        .update(updateData)
+        .eq('id', memberId);
+    
+    if (error) {
+        console.error('[CLUB-MEMBERS] Erro ao atualizar membro:', error);
+        return false;
+    }
+    
+    return true;
+};
+
+/**
+ * Remove um membro do clube (soft delete via status)
+ */
+export const removeClubMember = async (memberId: string): Promise<boolean> => {
+    const { error } = await supabase
+        .from('club_members')
+        .update({ status: ClubMemberStatus.LEFT })
+        .eq('id', memberId);
+    
+    if (error) {
+        console.error('[CLUB-MEMBERS] Erro ao remover membro:', error);
+        return false;
+    }
+    
+    return true;
+};
+
+/**
+ * Verifica se um usuário é membro de um clube (com role específico)
+ */
+export const isUserClubMember = async (
+    userId: string, 
+    clubId: string, 
+    role?: ClubMemberRole
+): Promise<boolean> => {
+    let query = supabase
+        .from('club_members')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('club_id', clubId)
+        .eq('status', ClubMemberStatus.ACTIVE);
+    
+    if (role) {
+        query = query.eq('role', role);
+    }
+    
+    const { data, error } = await query.limit(1);
+    
+    if (error) {
+        console.error('[CLUB-MEMBERS] Erro ao verificar membro:', error);
+        return false;
+    }
+    
+    return data !== null && data.length > 0;
+};
+
+/**
+ * Verifica se um usuário pode gerenciar um clube (é OWNER ou ADMIN)
+ */
+export const canManageClub = async (userId: string, clubId: string): Promise<boolean> => {
+    const { data, error } = await supabase
+        .rpc('can_manage_club', { 
+            p_user_id: userId,
+            p_club_id: clubId
+        });
+    
+    if (error) {
+        console.error('[CLUB-MEMBERS] Erro ao verificar permissão:', error);
+        return false;
+    }
+    
+    return data === true;
+};
+
+/**
+ * Obtém o role de um usuário em um clube específico
+ */
+export const getUserClubRole = async (userId: string, clubId: string): Promise<ClubMemberRole | null> => {
+    const { data, error } = await supabase
+        .rpc('get_user_club_role', { 
+            p_user_id: userId,
+            p_club_id: clubId
+        });
+    
+    if (error) {
+        console.error('[CLUB-MEMBERS] Erro ao buscar role:', error);
+        return null;
+    }
+    
+    return data === 'NONE' ? null : (data as ClubMemberRole);
+};
+
+/**
+ * Verifica se um usuário é jogador de um clube (para aplicar descontos)
+ */
+export const isClubPlayer = async (userId: string, clubId: string): Promise<boolean> => {
+    const { data, error } = await supabase
+        .rpc('is_club_player', { 
+            p_user_id: userId,
+            p_club_id: clubId
+        });
+    
+    if (error) {
+        console.error('[CLUB-MEMBERS] Erro ao verificar jogador:', error);
+        return false;
+    }
+    
+    return data === true;
+};
 
 // --- Dashboard Stats ---
 export const getPlayerStats = async (userId: string): Promise<PlayerStats> => {

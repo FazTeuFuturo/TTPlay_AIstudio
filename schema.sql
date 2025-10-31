@@ -93,6 +93,7 @@ CREATE TABLE public.tournament_categories (
   entry_fee numeric NOT NULL DEFAULT 0,
   start_time time without time zone,
   players_per_group integer,
+  num_advancing_from_group integer DEFAULT 2,
   k_factor integer DEFAULT 32,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone NOT NULL DEFAULT now(),

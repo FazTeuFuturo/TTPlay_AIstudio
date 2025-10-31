@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { User, UserSession, Role, Club } from './types';
-import { login, logout, getCurrentUserSession, getUserById, registerPlayer, registerClub, getCart, addToCart, checkout, getClubById, transferClubAdminship, updateUserDetails } from './data-service';
+import { User, UserSession, Role, Club, ClubMemberRole } from './types';
+import { login, logout, getCurrentUserSession, getUserById, registerPlayer, registerClub, getCart, addToCart, checkout, getClubById, transferClubAdminship, updateUserDetails, getManagedClubs, getUserClubRole } from './data-service';
+import { ClubSelector } from './components/ClubSelector';
+import { ClubMembersManager } from './components/ClubMembersManager';
 import { PingPongPaddleIcon, ShoppingCartIcon, SpinnerIcon } from './components/Icons';
 import AuthPage from './components/AuthPage';
 import CheckoutPage from './components/CheckoutPage';
@@ -73,7 +75,7 @@ const Footer: React.FC = () => (
     </footer>
 );
 
-type MainView = 'dashboard' | 'events' | 'profile';
+type MainView = 'dashboard' | 'events' | 'members' | 'profile';
 type ModalView = 'checkout' | 'subscription' | 'none';
 
 
@@ -81,6 +83,10 @@ const App: React.FC = () => {
   const [session, setSession] = useState<UserSession | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [managedClub, setManagedClub] = useState<Club | null>(null);
+  const [activeClubId, setActiveClubId] = useState<string | null>(null);
+  const [clubRole, setClubRole] = useState<ClubMemberRole | null>(null);
+  const [managedClubsCount, setManagedClubsCount] = useState(0);
+  const [showClubSelector, setShowClubSelector] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [mainView, setMainView] = useState<MainView>('dashboard');
   const [modalView, setModalView] = useState<ModalView>('none');
@@ -98,11 +104,35 @@ const App: React.FC = () => {
         if(user.role === Role.PLAYER) {
             setCartCount(getCart().length);
         }
-        if (user.role === Role.CLUB_ADMIN && user.clubId) {
-            const club = await getClubById(user.clubId);
-            setManagedClub(club || null);
+        
+        // NOVO: Sistema Club-Centric
+        if (user.role === Role.CLUB_ADMIN) {
+            const managedClubs = await getManagedClubs(currentSession.userId);
+            setManagedClubsCount(managedClubs.length);
+            
+            // Se já tem clube ativo, carregar seus dados
+            if (activeClubId) {
+                const club = await getClubById(activeClubId);
+                setManagedClub(club || null);
+                const role = await getUserClubRole(currentSession.userId, activeClubId);
+                setClubRole(role);
+            } 
+            // Se não tem clube ativo mas existe no sistema antigo
+            else if (user.clubId) {
+                const club = await getClubById(user.clubId);
+                setManagedClub(club || null);
+                setActiveClubId(user.clubId);
+                const role = await getUserClubRole(currentSession.userId, user.clubId);
+                setClubRole(role);
+            }
+            // Se não tem clube ativo e tem managed clubs, mostrar selector
+            else if (managedClubs.length > 0) {
+                setShowClubSelector(true);
+            }
         } else {
             setManagedClub(null);
+            setActiveClubId(null);
+            setClubRole(null);
         }
       } else {
          setCurrentUser(null);
@@ -112,6 +142,8 @@ const App: React.FC = () => {
       setSession(null);
       setCurrentUser(null);
       setManagedClub(null);
+      setActiveClubId(null);
+      setClubRole(null);
       setCartCount(0);
     }
   }
@@ -150,7 +182,7 @@ const App: React.FC = () => {
   const handleRegisterClub = async (clubData: Partial<Club>, adminData: Partial<User>): Promise<boolean> => {
      try {
         const { club, admin } = await registerClub(clubData, adminData);
-        alert(`Clube ${club.name} cadastrado com sucesso! Faça o login como ${admin.name} para continuar.`);
+        alert(`Clube ${club.name} cadastrado com sucesso! Faça o login para continuar.`);
         return true;
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -169,6 +201,25 @@ const App: React.FC = () => {
   const handleAdminTransferSuccess = () => {
     alert('Administração transferida com sucesso! Você será deslogado.');
     handleLogout();
+  };
+
+  // NOVO: Handler para seleção de clube
+  const handleSelectClub = async (clubId: string, role: ClubMemberRole) => {
+    setActiveClubId(clubId);
+    setClubRole(role);
+    setShowClubSelector(false);
+    
+    const club = await getClubById(clubId);
+    setManagedClub(club || null);
+    setMainView('dashboard');
+  };
+
+  // NOVO: Handler para trocar de clube
+  const handleSwitchClub = () => {
+    setShowClubSelector(true);
+    setActiveClubId(null);
+    setManagedClub(null);
+    setClubRole(null);
   };
 
   const handleAddToCart = (categoryId: string, eventId: string) => {
@@ -218,6 +269,12 @@ const App: React.FC = () => {
                 return <ClubEventsPage adminUser={currentUser} onNavigate={(view) => setModalView(view as ModalView)} />;
             }
             return null;
+        case 'members':
+            // Só disponível para admins de clube
+            if (currentUser.role === Role.CLUB_ADMIN && activeClubId && clubRole) {
+                return <ClubMembersManager clubId={activeClubId} currentUserRole={clubRole} />;
+            }
+            return null;
         case 'profile':
             if (currentUser.role === Role.PLAYER) {
                 return <PlayerProfileForm user={currentUser} mode="edit" onFormSubmit={async (data) => {
@@ -253,6 +310,11 @@ const App: React.FC = () => {
     )
   }
 
+  // NOVO: Mostrar ClubSelector se necessário
+  if (session && currentUser && showClubSelector) {
+    return <ClubSelector userId={currentUser.id} onSelectClub={handleSelectClub} />;
+  }
+
   if (!session || !currentUser) {
       return (
          <div className="min-h-screen flex flex-col bg-slate-900 bg-gradient-to-br from-slate-900 to-slate-800">
@@ -276,8 +338,11 @@ const App: React.FC = () => {
             <AppLayout 
                 user={currentUser}
                 managedClub={managedClub}
+                clubRole={clubRole}
+                managedClubsCount={managedClubsCount}
                 activeView={mainView}
                 onNavigate={setMainView}
+                onSwitchClub={handleSwitchClub}
             >
                 {modalView !== 'none' ? renderModalContent() : renderMainContent()}
             </AppLayout>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { TournamentCategory, Match, User, Group, TournamentStatus, TournamentFormat } from '../types';
 // FIX: Import `getCategoryById` to fetch the latest category data.
-import { getMatches, getUsers, getGroups, updateMatchResultAndAdvance, drawGroupsAndGenerateMatches, getCategoryById, generateKnockoutStage, finalizeGroupStage } from '../data-service';
+import { getMatches, getUsers, getGroups, updateMatchResultAndAdvance, drawGroupsAndGenerateMatches, getCategoryById, advanceFromGroupStage, finalizeGroupStage } from '../data-service';
 import { Bracket } from './Bracket';
 import { GroupStageView } from './GroupStageView';
 import { GroupManager } from './GroupManager';
@@ -110,15 +110,21 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
   );
 
   const fetchData = async () => {
-    console.log('[DEBUG-FETCH] Iniciando fetchData...');
+    console.log('[DEBUG-FETCH] ========== INICIANDO FETCHDATA ==========');
     setIsLoadingData(true);
     try {
       // Buscar categoria e dados básicos
       const cat = await getCategoryById(currentCategory.id) || currentCategory;
       console.log('[DEBUG-FETCH] Categoria carregada:', {
         id: cat.id,
+        name: cat.name,
         format: cat.format,
-        status: cat.status
+        formatValue: cat.format,
+        formatExpected: TournamentFormat.GRUPOS_E_ELIMINATORIA,
+        isCorrectFormat: cat.format === TournamentFormat.GRUPOS_E_ELIMINATORIA,
+        status: cat.status,
+        statusValue: cat.status,
+        numAdvancingFromGroup: cat.numAdvancingFromGroup
       });
       setCurrentCategory(cat);
       
@@ -151,13 +157,13 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
           porStage: allMatches.map(m => ({ id: m.id, stage: m.stage, status: m.status }))
         },
         grupos: {
-          total: groupMatches.length,
-          matches: groupMatches.map(m => ({ id: m.id, status: m.status })),
-          completas: groupMatches.filter(m => m.status === 'COMPLETED').length
+          total: filteredGroupMatches.length, // <-- CORREÇÃO AQUI
+          matches: filteredGroupMatches.map(m => ({ id: m.id, status: m.status })), // <-- CORREÇÃO AQUI
+          completas: filteredGroupMatches.filter(m => m.status === 'COMPLETED').length // <-- CORREÇÃO AQUI
         },
         knockout: {
-          total: knockoutMatches.length,
-          matches: knockoutMatches.map(m => ({ id: m.id, status: m.status }))
+          total: filteredKnockoutMatches.length, // <-- CORREÇÃO AQUI
+          matches: filteredKnockoutMatches.map(m => ({ id: m.id, status: m.status })) // <-- CORREÇÃO AQUI
         }
       });
       
@@ -172,50 +178,71 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
       console.log('Estado das Partidas:', {
         total: {
           todas: allMatches.length,
-          grupos: groupMatches.length,
-          knockout: knockoutMatches.length
+          grupos: filteredGroupMatches.length, // <-- CORREÇÃO AQUI
+          knockout: filteredKnockoutMatches.length // <-- CORREÇÃO AQUI
         },
         grupos: {
-          total: groupMatches.length,
-          completas: groupMatches.filter(m => m.status === 'COMPLETED').length,
-          todasCompletas: groupMatches.length > 0 && groupMatches.every(m => m.status === 'COMPLETED')
+          total: filteredGroupMatches.length, // <-- CORREÇÃO AQUI
+          completas: filteredGroupMatches.filter(m => m.status === 'COMPLETED').length, // <-- CORREÇÃO AQUI
+          todasCompletas: filteredGroupMatches.length > 0 && filteredGroupMatches.every(m => m.status === 'COMPLETED') // <-- CORREÇÃO AQUI
         },
         deveExibirBotao: cat.format === TournamentFormat.GRUPOS_E_ELIMINATORIA && 
-                         groupMatches.length > 0 && 
-                         groupMatches.every(m => m.status === 'COMPLETED') &&
-                         knockoutMatches.length === 0
+                         filteredGroupMatches.length > 0 && // <-- CORREÇÃO AQUI
+                         filteredGroupMatches.every(m => m.status === 'COMPLETED') && // <-- CORREÇÃO AQUI
+                         filteredKnockoutMatches.length === 0 // <-- CORREÇÃO AQUI
       });
       console.log('==========================================');
       
       console.log('Análise das partidas:', {
         total: allMatches.length,
         grupos: {
-          total: groupMatches.length,
-          completas: groupMatches.filter(m => m.status === 'COMPLETED').length,
-          status: groupMatches.map(m => m.status)
+          total: filteredGroupMatches.length, // <-- CORREÇÃO AQUI
+          completas: filteredGroupMatches.filter(m => m.status === 'COMPLETED').length, // <-- CORREÇÃO AQUI
+          status: filteredGroupMatches.map(m => m.status) // <-- CORREÇÃO AQUI
         },
         knockout: {
-          total: knockoutMatches.length
+          total: filteredKnockoutMatches.length // <-- CORREÇÃO AQUI
         }
       });
+
+      // --- INÍCIO DA CORREÇÃO 1 ---
+      // Use as variáveis LOCAIS (filtered...) que você acabou de criar,
+      // pois o estado (groupMatches, knockoutMatches) ainda não foi atualizado.
       
-      // Verificar se todas as partidas dos grupos estão completas
-      const hasGroupMatches = groupMatches.length > 0;
-      const allCompleted = hasGroupMatches && groupMatches.every(m => m.status === 'COMPLETED');
-      const hasKnockout = knockoutMatches.length > 0;
+      const hasGroupMatches = filteredGroupMatches.length > 0;
+      const allCompleted = hasGroupMatches && filteredGroupMatches.every(m => m.status === 'COMPLETED');
+      const hasKnockout = filteredKnockoutMatches.length > 0;
       
-      console.log('Estado do torneio:', {
+      console.log('[DEBUG-STATE] ========== ANÁLISE DO ESTADO ==========');
+      console.log('[DEBUG-STATE] Partidas dos Grupos:', {
+        total: filteredGroupMatches.length,
+        completas: filteredGroupMatches.filter(m => m.status === 'COMPLETED').length,
+        pendentes: filteredGroupMatches.filter(m => m.status !== 'COMPLETED').length,
+        statusDeCadaPartida: filteredGroupMatches.map(m => ({
+          id: m.id,
+          status: m.status,
+          player1Id: m.player1Id,
+          player2Id: m.player2Id
+        }))
+      });
+      
+      console.log('[DEBUG-STATE] Condições:', {
         hasGroupMatches,
         allCompleted,
         hasKnockout,
         format: cat.format,
+        status: cat.status,
         isFormatCorrect: cat.format === TournamentFormat.GRUPOS_E_ELIMINATORIA
       });
       
-      // Atualizar estado que controla visibilidade do botão
+      // Verificar se todas as partidas dos grupos estão completas
       const shouldShowButton = cat.format === TournamentFormat.GRUPOS_E_ELIMINATORIA && allCompleted && !hasKnockout;
-      console.log('Deve mostrar botão?', shouldShowButton);
+      console.log('[DEBUG-STATE] ========== RESULTADO FINAL ==========');
+      console.log('[DEBUG-STATE] Deve mostrar botão "Finalizar Fase de Grupos"?', shouldShowButton);
+      console.log('[DEBUG-STATE] allGroupMatchesCompleted será definido como:', shouldShowButton);
       setAllGroupMatchesCompleted(shouldShowButton);
+      
+      // --- FIM DA CORREÇÃO 1 ---
       
       // Buscar outros dados necessários
       setUsers(await getUsers());
@@ -223,14 +250,17 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
         setGroups(await getGroups(cat.id));
       }
 
-      // Definir aba ativa com base no estado atual
+      // --- INÍCIO DA CORREÇÃO 2 ---
+      // Definir aba ativa com base no estado ATUAL (usando as variáveis locais)
       if (hasKnockout) {
         setActiveTab('bracket');
       } else if (hasGroupMatches) {
         setActiveTab('groups');
-      } else if (cat.status === TournamentStatus.REGISTRATION_CLOSED) {
+      } else {
         setActiveTab('registrations');
       }
+      // --- FIM DA CORREÇÃO 2 ---
+
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
     } finally {
@@ -300,7 +330,7 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
   const handleGenerateKnockoutStage = async () => {
     setIsProcessing(true);
     try {
-        const updatedCategory = await generateKnockoutStage(currentCategory.id);
+        const updatedCategory = await advanceFromGroupStage(currentCategory.id);
         alert("Chaves da fase eliminatória geradas com sucesso!");
         await fetchData(); // Refetch all data
         onDataUpdate();
@@ -347,21 +377,12 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
       );
     }
 
-    if (currentCategory.status === TournamentStatus.REGISTRATION) {
-      return (
-        <div className="text-center py-16 bg-slate-800/30 rounded-lg">
-          <h2 className="text-2xl font-bold text-slate-300">Aguardando Encerramento das Inscrições</h2>
-          <p className="text-slate-500 mt-2">A área de administração da categoria ficará disponível assim que as inscrições forem encerradas.</p>
-        </div>
-      )
-    }
-
     const renderRegistrations = () => (
       <div className="bg-slate-800/30 rounded-lg p-6">
         <div className="flex flex-col md:flex-row justify-between md:items-center gap-4 mb-6">
           <div>
-            <h2 className="text-2xl font-bold text-slate-300">Inscrições Encerradas</h2>
-            <p className="text-slate-500 mt-1">{currentCategory.registrations.length} atletas inscritos. Pronto para começar?</p>
+            <h2 className="text-2xl font-bold text-slate-300">Atletas Inscritos</h2>
+            <p className="text-slate-500 mt-1">{currentCategory.registrations.length} atletas na categoria.</p>
           </div>
           {currentCategory.status === TournamentStatus.REGISTRATION_CLOSED && (
             <button
@@ -418,9 +439,18 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
         );
       }
 
-      const allGroupMatchesCompleted = groupMatches.length > 0 && groupMatches.every(m => m.status === 'COMPLETED');
       const showFinalizeButton = allGroupMatchesCompleted && currentCategory.status === TournamentStatus.GROUP_STAGE;
       const showGenerateKnockoutButton = currentCategory.status === TournamentStatus.KNOCKOUT_PENDING;
+      
+      console.log('[DEBUG-RENDER-GROUPS] ========== RENDERIZANDO BOTÕES ==========');
+      console.log('[DEBUG-RENDER-GROUPS] Estado atual:', {
+        allGroupMatchesCompleted,
+        currentCategoryStatus: currentCategory.status,
+        statusEsperadoParaFinalizar: TournamentStatus.GROUP_STAGE,
+        statusEsperadoParaGerar: TournamentStatus.KNOCKOUT_PENDING,
+        showFinalizeButton,
+        showGenerateKnockoutButton
+      });
 
       return (
         <div>

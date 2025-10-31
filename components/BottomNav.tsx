@@ -5,10 +5,10 @@ import { LayoutDashboardIcon, TrophyIcon, UserCircleIcon } from './Icons';
 interface BottomNavProps {
   user: User;
   activeView: string;
-  onNavigate: (view: 'dashboard' | 'events' | 'profile') => void;
+  onNavigate: (view: 'dashboard' | 'events' | 'members' | 'profile') => void;
 }
 
-const NavItem: React.FC<{ label: string; view: 'dashboard' | 'events' | 'profile'; activeView: string; onClick: (view: 'dashboard' | 'events' | 'profile') => void; icon: React.FC<{className?: string}> }> = ({ label, view, activeView, onClick, icon: Icon }) => {
+const NavItem: React.FC<{ label: string; view: 'dashboard' | 'events' | 'members' | 'profile'; activeView: string; onClick: (view: 'dashboard' | 'events' | 'members' | 'profile') => void; icon: React.FC<{className?: string}> }> = ({ label, view, activeView, onClick, icon: Icon }) => {
   const isActive = activeView === view;
   return (
     <button
@@ -35,6 +35,7 @@ const BottomNav: React.FC<BottomNavProps> = ({ user, activeView, onNavigate }) =
   const adminNav = [
     { label: 'Dashboard', view: 'dashboard', icon: LayoutDashboardIcon },
     { label: 'Eventos', view: 'events', icon: TrophyIcon },
+    { label: 'Membros', view: 'members', icon: UserCircleIcon },
     { label: 'Clube', view: 'profile', icon: UserCircleIcon },
   ];
 
@@ -47,7 +48,7 @@ const BottomNav: React.FC<BottomNavProps> = ({ user, activeView, onNavigate }) =
           <NavItem
             key={item.view}
             label={item.label}
-            view={item.view as 'dashboard' | 'events' | 'profile'}
+            view={item.view as 'dashboard' | 'events' | 'members' | 'profile'}
             activeView={activeView}
             onClick={onNavigate}
             icon={item.icon}

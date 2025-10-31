@@ -30,7 +30,7 @@ const EventCardAdmin: React.FC<{ event: TournamentEvent, onSelect: () => void, o
                 e.stopPropagation();
                 onDelete();
             }}
-            className="bg-red-600/50 text-red-200 hover:bg-red-600 hover:text-white px-3 py-1 text-xs font-bold rounded transition-all duration-300 sm:opacity-0 sm:group-hover/card:opacity-100 flex-shrink-0 self-start sm:self-center"
+            className="bg-red-600/50 text-red-200 hover:bg-red-600 hover:text-white px-3 py-1 text-xs font-bold rounded transition-all duration-300 flex-shrink-0 self-start sm:self-center"
         >
             Remover
         </button>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { TournamentCategory, Match, User, Group, TournamentStatus, TournamentFormat } from '../types';
-import { getMatches, getUsers, getGroups, updateMatchResultAndAdvance, drawGroupsAndGenerateMatches, getCategoryById } from '../data-service';
+import { getMatches, getUsers, getGroups, updateMatchResultAndAdvance, drawGroupsAndGenerateMatches, getCategoryById, advanceFromGroupStage, finalizeGroupStage } from '../data-service';
 import { Bracket } from './Bracket';
 import { GroupStageView } from './GroupStageView';
 import { UsersIcon, PingPongPaddleIcon, ArrowLeftIcon, SpinnerIcon } from './Icons';
@@ -88,21 +88,69 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentCategory, setCurrentCategory] = useState<TournamentCategory>(category);
   const [showGroupConfigModal, setShowGroupConfigModal] = useState(false);
+  const [allGroupMatchesCompleted, setAllGroupMatchesCompleted] = useState(false);
   const [activeTab, setActiveTab] = useState<'registrations' | 'groups' | 'bracket'>(
     'registrations'
   );
 
   const fetchData = async (catId: string) => {
+    console.log('[DEBUG] ========== INICIANDO FETCHDATA ==========');
     setIsLoadingData(true);
     const freshCategory = await getCategoryById(catId);
     if (freshCategory) {
+      console.log('[DEBUG] Categoria carregada:', {
+        id: freshCategory.id,
+        name: freshCategory.name,
+        format: freshCategory.format,
+        status: freshCategory.status,
+        numAdvancingFromGroup: freshCategory.numAdvancingFromGroup
+      });
+      
       setCurrentCategory(freshCategory);
-      setMatches(await getMatches(freshCategory.id));
+      const allMatches = await getMatches(freshCategory.id);
+      setMatches(allMatches);
       setUsers(await getUsers());
+      
+      // Separar partidas
+      const groupMatchesFiltered = allMatches.filter(m => m.stage === 'GROUP');
+      const knockoutMatchesFiltered = allMatches.filter(m => m.stage === 'KNOCKOUT');
+      
+      console.log('[DEBUG] Análise das partidas:', {
+        total: allMatches.length,
+        grupos: {
+          total: groupMatchesFiltered.length,
+          completas: groupMatchesFiltered.filter(m => m.status === 'COMPLETED').length,
+          todasCompletas: groupMatchesFiltered.length > 0 && groupMatchesFiltered.every(m => m.status === 'COMPLETED')
+        },
+        knockout: {
+          total: knockoutMatchesFiltered.length
+        }
+      });
+      
+      // Verificar se pode mostrar botão
+      const hasGroupMatches = groupMatchesFiltered.length > 0;
+      const allCompleted = hasGroupMatches && groupMatchesFiltered.every(m => m.status === 'COMPLETED');
+      const hasKnockout = knockoutMatchesFiltered.length > 0;
+      const shouldShowButton = freshCategory.format === TournamentFormat.GRUPOS_E_ELIMINATORIA && allCompleted && !hasKnockout;
+      
+      console.log('[DEBUG] Deve mostrar botão?', {
+        shouldShowButton,
+        hasGroupMatches,
+        allCompleted,
+        hasKnockout,
+        format: freshCategory.format,
+        status: freshCategory.status
+      });
+      
+      setAllGroupMatchesCompleted(shouldShowButton);
+      
       if (freshCategory.format === TournamentFormat.GRUPOS_E_ELIMINATORIA || freshCategory.status === TournamentStatus.GROUP_STAGE) {
         setGroups(await getGroups(freshCategory.id));
       }
-      if (freshCategory.status === TournamentStatus.GROUP_STAGE) {
+      
+      if (hasKnockout) {
+        setActiveTab('bracket');
+      } else if (freshCategory.status === TournamentStatus.GROUP_STAGE) {
         setActiveTab('groups');
       } else if (freshCategory.status === TournamentStatus.IN_PROGRESS || freshCategory.status === TournamentStatus.COMPLETED) {
         setActiveTab('bracket');
@@ -136,6 +184,37 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         alert(`Erro ao gerar grupos: ${errorMessage}`);
+    } finally {
+        setIsProcessing(false);
+    }
+  };
+
+  const handleFinalizeGroupStage = async () => {
+    setIsProcessing(true);
+    try {
+        await finalizeGroupStage(currentCategory.id);
+        alert("Fase de grupos finalizada com sucesso!");
+        await fetchData(currentCategory.id);
+        onDataUpdate();
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        alert(`Erro ao finalizar fase de grupos: ${errorMessage}`);
+    } finally {
+        setIsProcessing(false);
+    }
+  };
+
+  const handleGenerateKnockoutStage = async () => {
+    setIsProcessing(true);
+    try {
+        const updatedCategory = await advanceFromGroupStage(currentCategory.id);
+        alert("Chaves da fase eliminatória geradas com sucesso!");
+        await fetchData(currentCategory.id);
+        onDataUpdate();
+        setActiveTab('bracket');
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        alert(`Erro ao gerar chaves: ${errorMessage}`);
     } finally {
         setIsProcessing(false);
     }
@@ -257,13 +336,38 @@ export const CategoryDetails: React.FC<CategoryDetailsProps> = ({ category, onBa
 
         {activeTab === 'groups' && (
             groups.length > 0 ? (
-                <GroupStageView 
-                    groups={groups} 
-                    matches={groupMatches} 
-                    players={users} 
-                    onScoreUpdate={handleScoreUpdate}
-                    tournamentStatus={currentCategory.status}
-                />
+                <div>
+                  <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-2xl font-bold text-slate-300">Fase de Grupos</h2>
+                    <div className="flex gap-3">
+                      {allGroupMatchesCompleted && currentCategory.status === TournamentStatus.GROUP_STAGE && (
+                        <button
+                          onClick={handleFinalizeGroupStage}
+                          disabled={isProcessing}
+                          className="bg-yellow-500 hover:bg-yellow-400 text-black font-bold py-2 px-4 rounded text-sm transition-colors flex items-center gap-2"
+                        >
+                          {isProcessing ? <><SpinnerIcon className="w-4 h-4" />Finalizando...</> : 'Finalizar Fase de Grupos'}
+                        </button>
+                      )}
+                      {currentCategory.status === TournamentStatus.KNOCKOUT_PENDING && (
+                        <button
+                          onClick={handleGenerateKnockoutStage}
+                          disabled={isProcessing}
+                          className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded text-sm transition-colors flex items-center gap-2"
+                        >
+                          {isProcessing ? <><SpinnerIcon className="w-4 h-4" />Gerando...</> : 'Gerar Chaves da Eliminatória'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <GroupStageView 
+                      groups={groups} 
+                      matches={groupMatches} 
+                      players={users} 
+                      onScoreUpdate={handleScoreUpdate}
+                      tournamentStatus={currentCategory.status}
+                  />
+                </div>
             ) : (
                  <div className="text-center py-16 bg-slate-800/30 rounded-lg">
                     <h2 className="text-2xl font-bold text-slate-300">Grupos não gerados</h2>

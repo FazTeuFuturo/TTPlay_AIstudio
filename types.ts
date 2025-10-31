@@ -182,3 +182,40 @@ export interface RecentMatch {
   opponentScore: number;
   ratingChange: number;
 }
+
+// --- Club Members System Types ---
+export enum ClubMemberRole {
+  OWNER = 'OWNER',     // Dono do clube
+  ADMIN = 'ADMIN',     // Administrador
+  STAFF = 'STAFF',     // Auxiliar
+  PLAYER = 'PLAYER',   // Atleta do clube
+}
+
+export enum ClubMemberStatus {
+  ACTIVE = 'ACTIVE',
+  SUSPENDED = 'SUSPENDED',
+  LEFT = 'LEFT',
+}
+
+export interface ClubMember {
+  id: string;
+  clubId: string;
+  userId: string;
+  role: ClubMemberRole;
+  status: ClubMemberStatus;
+  joinedAt: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ManagedClub {
+  clubId: string;
+  clubName: string;
+  role: ClubMemberRole;
+  joinedAt: string;
+}
+
+export interface ClubMemberWithUser extends ClubMember {
+  userName: string;
+  userEmail: string;
+}
